@@ -1,0 +1,15 @@
+{
+  "name": "snhea-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp Bot by 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "pino": "^8.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "fs-extra": "^11.1.0"
+  }
+}
