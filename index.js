@@ -1,59 +1,43 @@
-const { 
-    default: makeWASocket, 
-    useMultiFileAuthState, 
-    delay, 
-    makeCacheableSignalKeyStore, 
-    DisconnectReason 
-} = require("@whiskeysockets/baileys");
-const pino = require("pino");
-require('./config');
+    conn.ev.on('messages.upsert', async (chatUpdate) => {
+        try {
+            const m = chatUpdate.messages[0];
+            if (!m.message || m.key.fromMe) return; // Ignore your own messages
 
-async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('session');
-    
-    const conn = makeWASocket({
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
-        },
-        browser: ["Ubuntu", "Chrome", "20.0.04"] // Helps avoid some linking errors
-    });
+            const messageType = Object.keys(m.message)[0];
+            const body = (messageType === 'conversation') ? m.message.conversation : 
+                         (messageType === 'extendedTextMessage') ? m.message.extendedTextMessage.text : 
+                         (messageType === 'imageMessage') ? m.message.imageMessage.caption : '';
 
-    // Pairing Code Trigger
-    if (!conn.authState.creds.registered) {
-        const phoneNumber = "919947121619"; 
-        await delay(5000); // Gives it time to initialize before requesting code
-        let code = await conn.requestPairingCode(phoneNumber);
-        console.log(`\n\x1b[32m【 PAIRING CODE 】\x1b[0m`);
-        console.log(`Your Code: \x1b[33m${code}\x1b[0m\n`);
-    }
+            const prefix = '.'; // Your chosen prefix
+            const isCommand = body.startsWith(prefix);
+            if (!isCommand) return;
 
-    conn.ev.on('creds.update', saveCreds);
+            const args = body.slice(prefix.length).trim().split(/ +/);
+            const command = args.shift().toLowerCase();
 
-    conn.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
-        
-        if (connection === 'close') {
-            let reason = lastDisconnect?.error?.output?.statusCode;
-            console.log(`❌ Connection Closed. Reason: ${reason}`);
-            // Auto-reconnect logic
-            if (reason !== DisconnectReason.loggedOut) {
-                console.log("🔄 Reconnecting...");
-                startBot();
+            // --- Plugin Loader ---
+            const pluginFolder = './plugins';
+            const pluginFiles = fs.readdirSync(pluginFolder);
+
+            for (const file of pluginFiles) {
+                if (file.endsWith('.js')) {
+                    const plugin = require(`${pluginFolder}/${file}`);
+                    
+                    // Check if the command matches the plugin's trigger
+                    if (plugin.command && plugin.command.test(command)) {
+                        console.log(`Executing: ${command} from ${file}`);
+                        await plugin(m, { 
+                            conn, 
+                            args, 
+                            usedPrefix: prefix, 
+                            command,
+                            isOwner: m.key.remoteJid.includes('919947121619'),
+                            isAdmin: false // Simplified for initial test
+                        });
+                    }
+                }
             }
-        } else if (connection === 'open') {
-            console.log(`\x1b[32m✅ SUCCESS: ${global.botName} is now Connected!\x1b[0m`);
+        } catch (err) {
+            console.error("Plugin Error:", err);
         }
     });
-
-    // Simple message handler to trigger your plugins
-    conn.ev.on('messages.upsert', async (chatUpdate) => {
-        const m = chatUpdate.messages[0];
-        if (!m.message) return;
-        // Your existing plugin loading logic goes here
-    });
-}
-
-startBot();
