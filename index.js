@@ -1,43 +1,88 @@
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    DisconnectReason, 
+    makeCacheableSignalKeyStore 
+} = require("@whiskeysockets/baileys");
+const pino = require("pino");
+const qrcode = require("qrcode-terminal");
+const fs = require("fs");
+require('./config');
+
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('session');
+    
+    const conn = makeWASocket({
+        logger: pino({ level: 'silent' }),
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+        },
+        browser: ["Syam-Bot", "Safari", "1.0.0"]
+    });
+
+    conn.ev.on('creds.update', saveCreds);
+
+    conn.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        
+        if (qr) {
+            console.log('📸 Scan the QR code below to link 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊:');
+            qrcode.generate(qr, { small: true });
+        }
+
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) startBot();
+        } else if (connection === 'open') {
+            console.log('✅ Connected! 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓 is now the owner.');
+        }
+    });
+
     conn.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const m = chatUpdate.messages[0];
-            if (!m.message || m.key.fromMe) return; // Ignore your own messages
+            if (!m.message || m.key.fromMe) return;
 
-            const messageType = Object.keys(m.message)[0];
-            const body = (messageType === 'conversation') ? m.message.conversation : 
-                         (messageType === 'extendedTextMessage') ? m.message.extendedTextMessage.text : 
-                         (messageType === 'imageMessage') ? m.message.imageMessage.caption : '';
-
-            const prefix = '.'; // Your chosen prefix
-            const isCommand = body.startsWith(prefix);
-            if (!isCommand) return;
+            const body = m.message.conversation || m.message.extendedTextMessage?.text || m.message.imageMessage?.caption || '';
+            const prefix = '.'; 
+            
+            if (!body.startsWith(prefix)) return;
 
             const args = body.slice(prefix.length).trim().split(/ +/);
             const command = args.shift().toLowerCase();
 
-            // --- Plugin Loader ---
-            const pluginFolder = './plugins';
-            const pluginFiles = fs.readdirSync(pluginFolder);
+            // --- TEST RESPONSE ---
+            if (command === 'test') {
+                return await conn.sendMessage(m.key.remoteJid, { text: 'Hello! 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 is online and responding!' });
+            }
 
+            // --- PLUGIN LOADER ---
+            const pluginFiles = fs.readdirSync('./plugins');
             for (const file of pluginFiles) {
                 if (file.endsWith('.js')) {
-                    const plugin = require(`${pluginFolder}/${file}`);
+                    const plugin = require(`./plugins/${file}`);
                     
-                    // Check if the command matches the plugin's trigger
-                    if (plugin.command && plugin.command.test(command)) {
-                        console.log(`Executing: ${command} from ${file}`);
+                    // Improved check for both String and Regex commands
+                    const isCommand = Array.isArray(plugin.command) 
+                        ? plugin.command.includes(command) 
+                        : (plugin.command instanceof RegExp ? plugin.command.test(command) : plugin.command === command);
+
+                    if (isCommand) {
                         await plugin(m, { 
                             conn, 
                             args, 
                             usedPrefix: prefix, 
                             command,
-                            isOwner: m.key.remoteJid.includes('919947121619'),
-                            isAdmin: false // Simplified for initial test
+                            isOwner: m.key.remoteJid.includes('919947121619') 
                         });
                     }
                 }
             }
         } catch (err) {
-            console.error("Plugin Error:", err);
+            console.error("Handler Error:", err);
         }
-    });
+    }); // End of messages.upsert
+} // End of startBot
+
+startBot();
