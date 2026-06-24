@@ -1,4 +1,5 @@
-# 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 WhatsApp Bot
+# 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 
+WhatsApp Bot
 
 Welcome to the official repository for **🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊**, a high-performance, plugin-based WhatsApp assistant designed for group management and utility. 
 
