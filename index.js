@@ -53,9 +53,18 @@ async function startBot() {
             const command = args.shift().toLowerCase();
 
             // --- TEST RESPONSE ---
-            if (command === 'test') {
-                return await conn.sendMessage(m.key.remoteJid, { text: 'Hello! 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 is online and responding!' });
-            }
+                if (command === 'test') {
+          // 1. Send "typing..." status to the chat
+                     await conn.sendPresenceUpdate('composing', m.key.remoteJid);
+    
+        // 2. Add a randomized delay (e.g., between 2 to 4 seconds)
+                     const delay = Math.floor(Math.random() * 2000) + 2000;
+                     await new Promise(resolve => setTimeout(resolve, delay));
+    
+     // 3. Send the actual message
+                     return await conn.sendMessage(m.key.remoteJid, { text: 'Hello! 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 is online and responding!' });
+                }
+        
 
             // --- PLUGIN LOADER ---
             const pluginFiles = fs.readdirSync('./plugins');
