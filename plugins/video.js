@@ -41,14 +41,17 @@ Downloading video... Please wait! 📺
             caption: caption 
         }, { quoted: mek });
 
-        // 4. Download and Send the Video (MP4)
-        // Using a reliable API for MP4 downloads
-        let down = await fetchJson(`https://widipe.com/download/ytdl?url=${url}`);
+        // Using Siputzx Ummy API
+        let down = await fetchJson(`https://api.siputzx.my.id/api/d/ummy?url=${url}`);
         
-        if (!down.result || !down.result.mp4) return reply("❌ Error: Could not download video. Try a shorter video.");
+        if (!down.data || !down.data.url) return reply("❌ Error: Could not download video. Try a shorter video.");
+
+        // Find MP4 with audio
+        let video = down.data.url.find(item => item.ext === 'mp4' && !item.no_audio);
+        if (!video || !video.url) return reply("❌ Error: MP4 conversion failed.");
 
         await conn.sendMessage(from, { 
-            video: { url: down.result.mp4 }, 
+            video: { url: video.url }, 
             mimetype: "video/mp4",
             caption: `🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊`
         }, { quoted: mek });

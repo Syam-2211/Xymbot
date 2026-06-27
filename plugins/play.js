@@ -40,13 +40,16 @@ Downloading audio... Please wait! 🎧
             caption: caption 
         }, { quoted: mek });
 
-        // Using Siputzx Free API (widipe is dead)
-        let down = await fetchJson(`https://api.siputzx.my.id/api/d/ytmp3?url=${url}`);
+        // Using Siputzx Ummy API
+        let down = await fetchJson(`https://api.siputzx.my.id/api/d/ummy?url=${url}`);
         
-        if (!down.data || !down.data.dl) return reply("❌ Error: Could not download audio. Try another song.");
+        if (!down.data || !down.data.url) return reply("❌ Error: Could not download audio. Try another song.");
+
+        let audio = down.data.url.find(item => item.ext === 'mp3');
+        if (!audio || !audio.url) return reply("❌ Error: MP3 conversion failed.");
 
         await conn.sendMessage(from, { 
-            audio: { url: down.data.dl }, 
+            audio: { url: audio.url }, 
             mimetype: "audio/mpeg" 
         }, { quoted: mek });
 

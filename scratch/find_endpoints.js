@@ -6,11 +6,11 @@ async function run() {
         const text = await res.text();
         console.log('JS Bundle length:', text.length);
         
-        // Find all strings starting with /api/
-        const regex = /\/api\/[a-zA-Z0-9_\-\/]+/g;
+        // Find all strings starting with https://
+        const regex = /https?:\/\/[^\s"'`]+/g;
         const matches = text.match(regex) || [];
         const unique = [...new Set(matches)];
-        console.log('Found /api/ paths:', unique.filter(p => p.includes('dl') || p.includes('download') || p.includes('yt') || p.includes('tik') || p.includes('ig') || p.includes('fb')));
+        console.log('Found URLs:', unique.filter(u => u.includes('siputzx') || u.includes('api')));
     } catch (e) {
         console.log('Error:', e.message);
     }

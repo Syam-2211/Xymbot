@@ -18,9 +18,9 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 
         reply("⬇️ *Downloading from Instagram...*");
 
-        let data = await fetchJson(`https://api.siputzx.my.id/api/d/ig?url=${q}`);
+        let data = await fetchJson(`https://api.siputzx.my.id/api/d/igram?url=${q}`);
         
-        if (!data.data || data.data.length === 0) return reply("❌ Error: Could not find the post. Is account private?");
+        if (!data.data || !data.data.success) return reply("❌ Error: Could not find the post. Is account private?");
 
         let caption = `
 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *INSTA DOWNLOADER*
@@ -28,8 +28,15 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
 `;
 
-        // Siputzx IG API returns an array of media objects containing .url
-        let mediaUrl = data.data[0].url;
+        // Handle possible object or array structures in response
+        let mediaUrl = "";
+        if (Array.isArray(data.data.response)) {
+            mediaUrl = data.data.response[0]?.url || data.data.response[0];
+        } else {
+            mediaUrl = data.data.response?.url || data.data.response;
+        }
+
+        if (!mediaUrl) return reply("❌ Error: No download URL found.");
 
         await conn.sendMessage(from, { 
             video: { url: mediaUrl }, 
@@ -61,7 +68,7 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 
         let data = await fetchJson(`https://api.siputzx.my.id/api/d/facebook?url=${q}`);
         
-        if (!data.data || !data.data.urls || data.data.urls.length === 0) return reply("❌ Error: Video not found or private.");
+        if (!data.data || !data.data.downloads || data.data.downloads.length === 0) return reply("❌ Error: Video not found or private.");
 
         let caption = `
 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *FB DOWNLOADER*
@@ -69,9 +76,11 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
 `;
 
-        // Siputzx FB API returns .data.urls array (choose HD or SD)
-        const urls = data.data.urls;
-        let videoUrl = urls.find(u => u.quality === 'HD')?.url || urls[0].url;
+        // Siputzx FB API returns .data.downloads array with quality property
+        const downloads = data.data.downloads;
+        let videoUrl = downloads.find(u => u.quality.includes('HD'))?.url 
+            || downloads.find(u => u.quality.includes('SD'))?.url 
+            || downloads[0].url;
 
         await conn.sendMessage(from, { 
             video: { url: videoUrl }, 
