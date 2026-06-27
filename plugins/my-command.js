@@ -1,4 +1,4 @@
-const { cmd } = require('../lib'); // This loads the command handler
+const { cmd } = require('../command'); // This loads the command handler
 
 // COMMAND: .catalogue
 cmd({

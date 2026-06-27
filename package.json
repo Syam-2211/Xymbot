@@ -8,8 +8,11 @@
   },
   "dependencies": {
     "@whiskeysockets/baileys": "latest",
+    "fs-extra": "^11.1.0",
     "pino": "^8.0.0",
     "qrcode-terminal": "^0.12.0",
-    "fs-extra": "^11.1.0"
+    "sharp": "^0.35.2",
+    "yt-search": "^2.13.1",
+    "ytdl-core": "^4.11.5"
   }
 }

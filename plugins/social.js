@@ -18,21 +18,21 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 
         reply("⬇️ *Downloading from Instagram...*");
 
-        // Using a stable Free API
-        let data = await fetchJson(`https://widipe.com/instagram?url=${q}`);
+        let data = await fetchJson(`https://api.siputzx.my.id/api/d/ig?url=${q}`);
         
-        if (!data.result) return reply("❌ Error: Could not find the post. Is account private?");
+        if (!data.data || data.data.length === 0) return reply("❌ Error: Could not find the post. Is account private?");
 
-        // Caption with your Fancy Names
         let caption = `
 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *INSTA DOWNLOADER*
 
 👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
 `;
 
-        // Send the media (Video or Image)
+        // Siputzx IG API returns an array of media objects containing .url
+        let mediaUrl = data.data[0].url;
+
         await conn.sendMessage(from, { 
-            video: { url: data.result[0].url }, 
+            video: { url: mediaUrl }, 
             caption: caption 
         }, { quoted: mek });
 
@@ -59,20 +59,19 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 
         reply("⬇️ *Downloading from Facebook...*");
 
-        // Using a stable Free API
-        let data = await fetchJson(`https://widipe.com/facebook?url=${q}`);
+        let data = await fetchJson(`https://api.siputzx.my.id/api/d/facebook?url=${q}`);
         
-        if (!data.result) return reply("❌ Error: Video not found or private.");
+        if (!data.data || !data.data.urls || data.data.urls.length === 0) return reply("❌ Error: Video not found or private.");
 
         let caption = `
 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *FB DOWNLOADER*
 
-📝 *Title:* ${data.result.title || "Facebook Video"}
 👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
 `;
 
-        // Send the HD Video if available, otherwise SD
-        let videoUrl = data.result.hd || data.result.sd;
+        // Siputzx FB API returns .data.urls array (choose HD or SD)
+        const urls = data.data.urls;
+        let videoUrl = urls.find(u => u.quality === 'HD')?.url || urls[0].url;
 
         await conn.sendMessage(from, { 
             video: { url: videoUrl }, 
@@ -84,4 +83,3 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
         reply("❌ Error fetching Facebook. Try again later.");
     }
 });
-

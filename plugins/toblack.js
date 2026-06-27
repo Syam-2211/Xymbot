@@ -13,38 +13,30 @@ cmd({
 },
 async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, reply }) => {
     try {
-        // 1. Check if user replied to a video
         if (!m.quoted || m.quoted.type !== 'videoMessage') {
-            return reply("⚠️ Please reply to a video!");
+            return reply("⚠️ Please *reply* to a video with *.toblack*");
         }
 
         reply("⬛ *Creating Black Screen Video...*");
 
-        // 2. Download the video
-        let media = await conn.downloadAndSaveMediaMessage(m.quoted);
+        let media = await m.quoted.download();
         let output = getRandom('.mp4');
 
-        // 3. Convert using FFmpeg (Draw black box over everything)
-        // -vf "drawbox=t=fill:c=black" -> This draws a filled black box
-        // -c:a copy -> This copies the audio without changing quality
-        exec(`ffmpeg -i ${media} -vf "drawbox=t=fill:c=black" -c:a copy ${output}`, (err) => {
-            fs.unlinkSync(media); // Delete original file
+        exec(`ffmpeg -i "${media}" -vf "drawbox=t=fill:c=black" -c:a copy "${output}"`, (err) => {
+            fs.unlinkSync(media);
+            if (err) return reply("❌ Error processing video. Make sure ffmpeg is installed.");
 
-            if (err) return reply("❌ Error processing video.");
-
-            // 4. Send the Result
-            conn.sendMessage(from, { 
-                video: { url: output }, 
+            conn.sendMessage(from, {
+                video: fs.readFileSync(output),
                 caption: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *BLACK MODE*",
                 mimetype: "video/mp4"
-            }, { quoted: mek }).then(() => {
-                fs.unlinkSync(output); // Clean up
+            }, { quoted: mek }).finally(() => {
+                try { fs.unlinkSync(output); } catch(_) {}
             });
         });
 
     } catch (e) {
         console.log(e);
-        reply("❌ Error: " + e);
+        reply("❌ Error: " + e.message);
     }
 });
-

@@ -1,69 +1,72 @@
-let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, isOwner }) => {
-    if (!m.isGroup) return m.reply('This command only works in groups!');
-    if (!isAdmin && !isOwner) return m.reply('❌ This is for Admins/Owner only.');
-    
+let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, isOwner, reply }) => {
+    if (!m.isGroup) return reply('This command only works in groups!');
+    if (!isAdmin && !isOwner) return reply('❌ This is for Admins/Owner only.');
+
+    if (!global.db.data.chats[m.chat]) global.db.data.chats[m.chat] = {};
     let chat = global.db.data.chats[m.chat];
-    let user = m.mentionedJid[0] || (m.quoted ? m.quoted.sender : (args[1] ? args[1].replace(/[@\s]/g, '') + '@s.whatsapp.net' : null));
+    let user = m.message?.extendedTextMessage?.contextInfo?.participant
+        || (args[0] ? args[0].replace(/[@\s]/g, '') + '@s.whatsapp.net' : null);
 
     switch (command) {
-        // --- MANUAL MODERATION ---
         case 'kick':
-            if (!isBotAdmin) return m.reply('I need Admin to kick! 🛡️');
+            if (!isBotAdmin) return reply('I need Admin to kick! 🛡️');
+            if (!user) return reply('❌ Reply to or mention a user to kick!');
             await conn.groupParticipantsUpdate(m.chat, [user], 'remove');
+            await conn.sendMessage(m.chat, { text: `✅ Kicked @${user.split('@')[0]}`, mentions: [user] }, { quoted: m });
             break;
 
         case 'promote':
-            if (!isBotAdmin) return m.reply('I need Admin to promote! 🔼');
+            if (!isBotAdmin) return reply('I need Admin to promote! 🔼');
+            if (!user) return reply('❌ Reply to or mention a user to promote!');
             await conn.groupParticipantsUpdate(m.chat, [user], 'promote');
+            await conn.sendMessage(m.chat, { text: `✅ Promoted @${user.split('@')[0]}`, mentions: [user] }, { quoted: m });
             break;
 
         case 'demote':
-            if (!isBotAdmin) return m.reply('I need Admin to demote! 🔽');
+            if (!isBotAdmin) return reply('I need Admin to demote! 🔽');
+            if (!user) return reply('❌ Reply to or mention a user to demote!');
             await conn.groupParticipantsUpdate(m.chat, [user], 'demote');
+            await conn.sendMessage(m.chat, { text: `✅ Demoted @${user.split('@')[0]}`, mentions: [user] }, { quoted: m });
             break;
 
-        // --- SECURITY & GREETING TOGGLES ---
         case 'antilink':
         case 'antidelete':
         case 'welcome':
-        case 'goodbye':
-            let feature = command;
+        case 'goodbye': {
             let status = args[0] ? args[0].toLowerCase() : '';
             if (status === 'on') {
-                chat[feature] = true;
-                m.reply(`✅ ${feature.toUpperCase()} is now ON.`);
+                chat[command] = true;
+                reply(`✅ ${command.toUpperCase()} is now ON.`);
             } else if (status === 'off') {
-                chat[feature] = false;
-                m.reply(`❌ ${feature.toUpperCase()} is now OFF.`);
+                chat[command] = false;
+                reply(`❌ ${command.toUpperCase()} is now OFF.`);
             } else {
-                m.reply(`Usage: ${usedPrefix + command} on/off`);
+                reply(`Usage: ${usedPrefix + command} on/off`);
             }
             break;
+        }
 
-        // --- CUSTOM TEXT CONFIG ---
         case 'setwelcome':
             chat.sWelcome = args.join(' ');
-            m.reply('✅ Custom Welcome message updated.');
+            reply('✅ Custom Welcome message updated.');
             break;
 
         case 'setgoodbye':
             chat.sGoodbye = args.join(' ');
-            m.reply('✅ Custom Goodbye message updated.');
+            reply('✅ Custom Goodbye message updated.');
             break;
 
-        // --- GROUP DASHBOARD ---
-        case 'ginfo':
-            let info = `
-📊 *🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 SETTINGS*
+        case 'ginfo': {
+            let info = `📊 *BOT GROUP SETTINGS*
 ┠─🛡 *Anti-Link:* ${chat.antilink ? '✅' : '❌'}
 ┠─🛡 *Anti-Delete:* ${chat.antidelete ? '✅' : '❌'}
 ┠─👋 *Welcome:* ${chat.welcome ? '✅' : '❌'}
 ┠─📤 *Goodbye:* ${chat.goodbye ? '✅' : '❌'}
 ┕━━━━━━━━━━━━━━━━━━━
-👑 *Dev:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
-`.trim();
-            await conn.reply(m.chat, info, m);
+👑 *Dev:* ${global.ownerName || 'Owner'}`.trim();
+            reply(info);
             break;
+        }
     }
 };
 
@@ -73,4 +76,3 @@ handler.command = /^(kick|promote|demote|antilink|antidelete|welcome|goodbye|set
 handler.group = true;
 
 module.exports = handler;
-

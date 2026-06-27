@@ -1,6 +1,6 @@
 const { cmd, commands } = require('../command');
 const { fetchJson } = require('../lib/functions');
-const yts = require('yt-search'); // This library searches YouTube
+const yts = require('yt-search'); 
 
 cmd({
     pattern: "play",
@@ -16,12 +16,12 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 
         reply("🔎 *Searching for your song...*");
 
-        // 1. Search YouTube for the song
         const search = await yts(q);
-        const data = search.all[0]; // Take the first result
+        if (!search.all || search.all.length === 0) return reply("❌ Song not found!");
+        
+        const data = search.all[0];
         const url = data.url;
 
-        // 2. Create a Fancy Caption
         let caption = `
 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *MUSIC PLAYER*
 
@@ -35,26 +35,23 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 Downloading audio... Please wait! 🎧
 `;
 
-        // 3. Send the Thumbnail (Cover Art) first
         await conn.sendMessage(from, { 
             image: { url: data.thumbnail }, 
             caption: caption 
         }, { quoted: mek });
 
-        // 4. Download and Send the Audio
-        // We use a stable API to convert YouTube to MP3
-        let down = await fetchJson(`https://widipe.com/download/ytdl?url=${url}`);
+        // Using Siputzx Free API (widipe is dead)
+        let down = await fetchJson(`https://api.siputzx.my.id/api/d/ytmp3?url=${url}`);
         
-        if (!down.result || !down.result.mp3) return reply("❌ Error: Could not download audio. Try another song.");
+        if (!down.data || !down.data.dl) return reply("❌ Error: Could not download audio. Try another song.");
 
         await conn.sendMessage(from, { 
-            audio: { url: down.result.mp3 }, 
+            audio: { url: down.data.dl }, 
             mimetype: "audio/mpeg" 
         }, { quoted: mek });
 
     } catch (e) {
         console.log(e);
-        reply("❌ Error: " + e);
+        reply("❌ Error: " + e.message);
     }
 });
-

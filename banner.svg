@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 240" width="100%" height="240">
+    <style>
+        .container {
+            background-color: #0d1117;
+            border-radius: 12px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            border: 1px solid #30363d;
+        }
+        .header {
+            font-size: 38px;
+            font-weight: 800;
+            fill: #ffffff;
+            opacity: 0;
+            animation: slideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards 0.2s;
+        }
+        .gradient-text {
+            fill: url(#gradient);
+        }
+        .subtitle {
+            font-size: 18px;
+            fill: #8b949e;
+            opacity: 0;
+            animation: fadeIn 0.8s ease forwards 0.8s;
+        }
+        .terminal-bg {
+            fill: #010409;
+            stroke: #21262d;
+            stroke-width: 1;
+            rx: 6px;
+        }
+        .terminal-dots circle {
+            opacity: 0;
+            animation: fadeIn 0.5s ease forwards 1s;
+        }
+        .line {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            fill: #3fb950;
+            opacity: 0;
+        }
+        .l1 { animation: type 0.1s step-end forwards 1.3s; }
+        .l2 { animation: type 0.1s step-end forwards 1.7s; }
+        .l3 { animation: type 0.1s step-end forwards 2.1s; }
+        .l4 { animation: type 0.1s step-end forwards 2.5s; fill: #58a6ff; }
+        
+        .cursor {
+            fill: #58a6ff;
+            opacity: 0;
+            animation: fadeIn 0.1s step-end forwards 2.5s, blink 1s step-end infinite 2.5s;
+        }
+
+        .status-dot {
+            fill: #3fb950;
+            opacity: 0;
+            animation: fadeIn 0.5s ease forwards 3s, pulse 2s ease-in-out infinite 3s;
+        }
+        .status-text {
+            font-size: 14px;
+            font-weight: 600;
+            fill: #3fb950;
+            opacity: 0;
+            animation: fadeIn 0.5s ease forwards 3s;
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes type {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+    </style>
+
+    <defs>
+        <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#FF0080" />
+            <stop offset="100%" stop-color="#7928CA" />
+        </linearGradient>
+        <filter id="glow">
+            <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+            <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+    </defs>
+
+    <rect width="800" height="240" class="container" />
+    
+    <!-- Title -->
+    <text x="40" y="65" class="header">
+        SNEHA BOT <tspan class="gradient-text">v1.0.0</tspan>
+    </text>
+    
+    <text x="40" y="95" class="subtitle">Advanced WhatsApp Assistant • AI Powered • Group Manager</text>
+
+    <!-- Terminal Window -->
+    <g transform="translate(40, 120)">
+        <rect width="720" height="95" class="terminal-bg" />
+        
+        <!-- Terminal Header Dots -->
+        <g class="terminal-dots" transform="translate(15, 15)">
+            <circle cx="0" cy="0" r="4" fill="#ff5f56" />
+            <circle cx="15" cy="0" r="4" fill="#ffbd2e" />
+            <circle cx="30" cy="0" r="4" fill="#27c93f" />
+        </g>
+
+        <!-- Terminal Output -->
+        <text x="15" y="45" class="line l1">&gt; initializing system protocols... [OK]</text>
+        <text x="15" y="65" class="line l2">&gt; loading neural networks... [OK]</text>
+        <text x="15" y="85" class="line l3">&gt; connecting to WhatsApp Web API... [OK]</text>
+        <text x="420" y="85" class="line l4">CONNECTION ESTABLISHED</text>
+        <rect x="615" y="73" width="8" height="15" class="cursor" />
+    </g>
+
+    <!-- Live Status Indicator -->
+    <g transform="translate(650, 45)">
+        <circle cx="0" cy="-4" r="5" class="status-dot" filter="url(#glow)"/>
+        <text x="15" y="0" class="status-text">SYSTEM ONLINE</text>
+    </g>
+</svg>

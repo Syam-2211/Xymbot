@@ -13,36 +13,30 @@ cmd({
 },
 async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, reply }) => {
     try {
-        // 1. Check if user replied to media
         if (!m.quoted || (m.quoted.type !== 'videoMessage' && m.quoted.type !== 'audioMessage')) {
-            return reply("⚠️ Please reply to a video or voice note!");
+            return reply("⚠️ Please *reply* to a video or voice note with *.tomp3*");
         }
 
         reply("🎵 *Converting to Audio...*");
 
-        // 2. Download the media
-        let media = await conn.downloadAndSaveMediaMessage(m.quoted);
+        let media = await m.quoted.download();
         let output = getRandom('.mp3');
 
-        // 3. Convert using FFmpeg
-        exec(`ffmpeg -i ${media} -vn -acodec libmp3lame -q:a 2 ${output}`, (err) => {
-            fs.unlinkSync(media); // Delete original file to save space
+        exec(`ffmpeg -i "${media}" -vn -acodec libmp3lame -q:a 2 "${output}"`, (err) => {
+            fs.unlinkSync(media);
+            if (err) return reply("❌ Error converting media. Make sure ffmpeg is installed.");
 
-            if (err) return reply("❌ Error converting media.");
-
-            // 4. Send the Audio File
-            conn.sendMessage(from, { 
-                audio: { url: output }, 
-                mimetype: "audio/mpeg", 
-                ptt: false // Set to true if you want it sent as a Voice Note (blue microphone)
-            }, { quoted: mek }).then(() => {
-                fs.unlinkSync(output); // Clean up the output file
+            conn.sendMessage(from, {
+                audio: fs.readFileSync(output),
+                mimetype: "audio/mpeg",
+                ptt: false
+            }, { quoted: mek }).finally(() => {
+                try { fs.unlinkSync(output); } catch(_) {}
             });
         });
 
     } catch (e) {
         console.log(e);
-        reply("❌ Error: " + e);
+        reply("❌ Error: " + e.message);
     }
 });
-

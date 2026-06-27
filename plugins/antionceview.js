@@ -11,46 +11,35 @@ cmd({
 },
 async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, reply }) => {
     try {
-        // 1. Check if the user replied to a message
-        if (!quoted) return reply("⚠️ Please reply to a 'View Once' image or video with *.vv*");
+        if (!m.quoted) return reply("⚠️ Please *reply* to a 'View Once' image or video with *.vv*");
 
-        // 2. Notify the user
         reply("🔓 *Decrypting View Once media...*");
 
-        // 3. Download the media (The bot can see it even if it's hidden!)
-        let media = await conn.downloadAndSaveMediaMessage(quoted);
+        const mediaPath = await m.quoted.download();
+        const quotedType = m.quoted.type;
 
-        // 4. Send it back as NORMAL media
-        // Check if it's an Image or Video to send correctly
-        
-        if (quoted.type === 'viewOnceMessageV2' || quoted.imageMessage || quoted.type === 'imageMessage') {
-            // Send as Image
-            await conn.sendMessage(from, { 
-                image: { url: media }, 
-                caption: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *ANTI-VIEWONCE*" 
+        if (quotedType === 'imageMessage' || quotedType === 'viewOnceMessageV2') {
+            await conn.sendMessage(from, {
+                image: fs.readFileSync(mediaPath),
+                caption: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *ANTI-VIEWONCE*"
             }, { quoted: mek });
-
-        } else if (quoted.videoMessage || quoted.type === 'videoMessage') {
-            // Send as Video
-            await conn.sendMessage(from, { 
-                video: { url: media }, 
-                caption: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *ANTI-VIEWONCE*" 
+        } else if (quotedType === 'videoMessage') {
+            await conn.sendMessage(from, {
+                video: fs.readFileSync(mediaPath),
+                caption: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *ANTI-VIEWONCE*"
             }, { quoted: mek });
         } else {
-            // Fallback for other types
-             await conn.sendMessage(from, { 
-                document: { url: media }, 
+            await conn.sendMessage(from, {
+                document: fs.readFileSync(mediaPath),
                 mimetype: "application/octet-stream",
-                caption: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *RECOVERED*" 
+                caption: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *RECOVERED*"
             }, { quoted: mek });
         }
 
-        // 5. Clean up
-        fs.unlinkSync(media);
+        fs.unlinkSync(mediaPath);
 
     } catch (e) {
         console.log(e);
         reply("❌ Error: Could not retrieve media. Make sure you replied to the ViewOnce message properly.");
     }
 });
-

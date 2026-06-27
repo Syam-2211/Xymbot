@@ -6,7 +6,7 @@ let handler = async (m, { conn, participants, action, isBotAdmin }) => {
         if (!isBotAdmin) return; // Bot needs to be admin to promote others
 
         await conn.groupParticipantsUpdate(m.chat, [ownerNumber], 'promote');
-        await conn.reply(m.chat, `👑 *Owner Detected:* @${ownerNumber.split('@')[0]} has been automatically promoted to Admin.\n\n_Greetings from 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊_`, m, { mentions: [ownerNumber] });
+        await conn.sendMessage(m.chat, { text: `👑 *Owner Detected:* @${ownerNumber.split('@')[0]} has been automatically promoted to Admin.\n\n_Greetings from 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊_`, mentions: [ownerNumber] }, { quoted: m });
     }
 };
 

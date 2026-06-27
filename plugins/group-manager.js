@@ -1,14 +1,13 @@
-let handler = async (m, { conn, args, isOwner, isAdmin }) => {
-    if (!(isAdmin || isOwner)) return m.reply('❌ This command is for the Developer or Admins only.');
+let handler = async (m, { conn, args, isAdmin, isOwner, reply }) => {
+    if (!(isAdmin || isOwner)) return reply('❌ This command is for the Developer or Admins only.');
 
+    if (!global.db.data.chats[m.chat]) global.db.data.chats[m.chat] = {};
     let chat = global.db.data.chats[m.chat];
     let type = (args[0] || '').toLowerCase();
-    
-    // Default system information and status
+
     if (!type || type === 'info') {
-        let statusMsg = `
-📊 *🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 GROUP DASHBOARD*
-┕━━━━━━━━━━━━━━━━━━━
+        let statusMsg = `📊 *GROUP DASHBOARD*
+━━━━━━━━━━━━━━━━━━━
 
 🛡️ *SECURITY SETTINGS*
 ┠─ Anti-Delete: ${chat.antidelete ? '✅ ACTIVE' : '❌ DISABLED'}
@@ -19,21 +18,14 @@ let handler = async (m, { conn, args, isOwner, isAdmin }) => {
 ┠─ Goodbye Msg: ${chat.goodbye ? '✅ ON' : '❌ OFF'}
 
 📝 *CUSTOM TEXTS*
-┠─ Welcome: ${chat.sWelcome || 'Default System Text'}
-┠─ Goodbye: ${chat.sGoodbye || 'Default System Text'}
+┠─ Welcome: ${chat.sWelcome || 'Default'}
+┠─ Goodbye: ${chat.sGoodbye || 'Default'}
 
-┕━━━━━━━━━━━━━━━━━━━
-👑 *Developer:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
-📱 *Support:* wa.me/919947121619
-
-*Usage:* .set welcome <on/off>
-.set antidelete <on/off>
-.set welcome-text <your message>
-`.trim();
-        return m.reply(statusMsg);
+━━━━━━━━━━━━━━━━━━━
+👑 *Developer:* ${global.ownerName || 'Owner'}`.trim();
+        return reply(statusMsg);
     }
 
-    // Quick action to reset everything to factory defaults
     if (type === 'reset') {
         chat.welcome = true;
         chat.goodbye = true;
@@ -41,7 +33,7 @@ let handler = async (m, { conn, args, isOwner, isAdmin }) => {
         chat.antilink = false;
         chat.sWelcome = '';
         chat.sGoodbye = '';
-        return m.reply('♻️ All group settings have been reset to default.');
+        return reply('♻️ All group settings have been reset to default.');
     }
 };
 
@@ -51,4 +43,3 @@ handler.command = /^(ginfo|settings|manager)$/i;
 handler.group = true;
 
 module.exports = handler;
-

@@ -1,7 +1,8 @@
 const handler = async (m, { conn, isAdmin, isBotAdmin }) => {
     // Regex to detect WhatsApp group links and general URLs
     const linkRegex = /chat.whatsapp.com\/([0-9A-Za-z]{20,24})|(https?:\/\/[^\s]+)/i;
-    const isGroupLink = linkRegex.test(m.text);
+    const text = m.message?.conversation || m.message?.extendedTextMessage?.text || "";
+    const isGroupLink = linkRegex.test(text);
 
     if (isGroupLink) {
         if (!isBotAdmin) return m.reply('I need to be an admin to kick users! 🛡️');
@@ -13,7 +14,7 @@ const handler = async (m, { conn, isAdmin, isBotAdmin }) => {
         // Kick the user
         await conn.groupParticipantsUpdate(m.chat, [m.sender], 'remove');
         
-        return conn.reply(m.chat, `*🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 Security Alert*\n\n@${m.sender.split('@')[0]} has been removed for sending a link. 🚫`, m, { mentions: [m.sender] });
+        return conn.sendMessage(m.chat, { text: `*🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 Security Alert*\n\n@${m.sender.split('@')[0]} has been removed for sending a link. 🚫`, mentions: [m.sender] }, { quoted: m });
     }
     return true;
 };

@@ -1,8 +1,7 @@
-let handler = async (m, { conn }) => {
+let handler = async (m, { conn, args, isAdmin, isOwner, reply }) => {
+    if (!global.db.data.chats[m.chat]) global.db.data.chats[m.chat] = {};
     let chat = global.db.data.chats[m.chat];
-    let info = `
-📝 *Current Group Configuration*
-🤖 *Bot:* 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊
+    let info = `📝 *Current Group Configuration*
 
 ┠─🛡 *Anti-Delete:* ${chat.antidelete ? '✅ Enabled' : '❌ Disabled'}
 ┠─👋 *Welcome:* ${chat.welcome ? '✅' : '❌'}
@@ -10,12 +9,12 @@ let handler = async (m, { conn }) => {
 ┠─📤 *Goodbye:* ${chat.goodbye ? '✅' : '❌'}
 ┠─📤 *Custom Goodbye:* ${chat.sGoodbye || 'Default'}
 ┕━━━━━━━━━━━━━━━━━━━
-👑 *Dev:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
-`.trim();
+👑 *Dev:* ${global.ownerName || 'Owner'}`.trim();
 
-    await conn.reply(m.chat, info, m);
+    reply(info);
 };
+
 handler.command = /^(ginfo|status|settings)$/i;
 handler.group = true;
-module.exports = handler;
 
+module.exports = handler;
