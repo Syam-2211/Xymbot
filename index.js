@@ -9,7 +9,24 @@ const pino = require("pino");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
 const path = require("path");
+const http = require("http");
 require('./config');
+
+// ─── HEALTH CHECK HTTP SERVER ──────────────────────────────────────────────────
+// Exposes a simple /health endpoint so the platform can verify the container is alive.
+const PORT = process.env.PORT || 3000;
+const healthServer = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+        status: 'ok',
+        bot: global.botName || 'XYMBOT',
+        uptime: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString()
+    }));
+});
+healthServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 Health server running on port ${PORT}`);
+});
 
 // Ensure tmp directory exists
 if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp');
