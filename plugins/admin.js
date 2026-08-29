@@ -11,8 +11,29 @@ let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, 
         case 'kick':
             if (!isBotAdmin) return reply('I need Admin to kick! 🛡️');
             if (!user) return reply('❌ Reply to or mention a user to kick!');
-            await conn.groupParticipantsUpdate(m.chat, [user], 'remove');
-            await conn.sendMessage(m.chat, { text: `✅ Kicked @${user.split('@')[0]}`, mentions: [user] }, { quoted: m });
+            try {
+                await conn.groupParticipantsUpdate(m.chat, [user], 'remove');
+                await conn.sendMessage(m.chat, { text: `✅ Kicked @${user.split('@')[0]}`, mentions: [user] }, { quoted: m });
+            } catch (err) {
+                reply('❌ Failed to kick user. They might already be removed, or I lack permissions.');
+            }
+            break;
+
+        case 'add':
+            if (!isBotAdmin) return reply('I need Admin to add users! 🛡️');
+            if (!user) return reply('❌ Reply to a message or type the number to add!\nExample: .add 919876543210');
+            try {
+                const response = await conn.groupParticipantsUpdate(m.chat, [user], 'add');
+                if (response[0]?.status === '403') {
+                    reply('❌ Failed to add user. Their privacy settings prevent them from being added by me! (Error 403)');
+                } else if (response[0]?.status === '409') {
+                    reply('❌ User is already in the group! (Error 409)');
+                } else {
+                    await conn.sendMessage(m.chat, { text: `✅ Added @${user.split('@')[0]}`, mentions: [user] }, { quoted: m });
+                }
+            } catch (err) {
+                reply('❌ Failed to add user. Check the number and try again.');
+            }
             break;
 
         case 'promote':
@@ -70,9 +91,9 @@ let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, 
     }
 };
 
-handler.help = ['kick', 'promote', 'demote', 'antilink', 'antidelete', 'welcome', 'goodbye', 'ginfo'];
+handler.help = ['add', 'kick', 'promote', 'demote', 'antilink', 'antidelete', 'welcome', 'goodbye', 'ginfo'];
 handler.tags = ['admin'];
-handler.command = /^(kick|promote|demote|antilink|antidelete|welcome|goodbye|setwelcome|setgoodbye|ginfo)$/i;
+handler.command = /^(add|kick|promote|demote|antilink|antidelete|welcome|goodbye|setwelcome|setgoodbye|ginfo)$/i;
 handler.group = true;
 
 module.exports = handler;

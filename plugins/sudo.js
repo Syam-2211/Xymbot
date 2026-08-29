@@ -35,18 +35,14 @@ let handler = async (m, { conn, args, isOwner }) => {
         return await conn.sendMessage(m.chat, { text, mentions: global.owner.map(n => n + '@s.whatsapp.net') }, { quoted: m });
     }
 
-    // Send a native WhatsApp Poll for sudo management
-    await conn.sendMessage(m.chat, {
-        poll: {
-            name: '👑 Sudo User Management',
-            values: [
-                '📋 .sudo list',
-                '🟢 .sudo add  (reply to user)',
-                '🔴 .sudo del  (reply to user)'
-            ],
-            selectableCount: 1
-        }
-    }, { quoted: m });
+    // Send a formatted text menu instead of a poll
+    let menuText = `👑 *Sudo User Management* 👑\n\n` +
+                   `Reply with one of the following commands:\n\n` +
+                   `📋 \`.sudo list\` - List all Sudo Users\n` +
+                   `🟢 \`.sudo add\` - Add a user (reply to them)\n` +
+                   `🔴 \`.sudo del\` - Remove a user (reply to them)`;
+
+    await conn.sendMessage(m.chat, { text: menuText }, { quoted: m });
 };
 
 handler.help = ['sudo'];

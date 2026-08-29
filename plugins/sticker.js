@@ -6,8 +6,8 @@ try { sharp = require('sharp'); } catch (_) {}
 cmd({
     pattern: "sticker",
     alias: ["s", "stic"],
-    desc: "Convert image or video to sticker",
-    category: "converter",
+    desc: global.LANG.sticker.STICKER_DESC,
+    category: "converters",
     react: "🎨",
     filename: __filename
 },
@@ -22,7 +22,7 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
         const isQuotedVideo = m.quoted && m.quoted.type === 'videoMessage';
 
         if (!isDirectImage && !isDirectVideo && !isQuotedImage && !isQuotedVideo) {
-            return reply("⚠️ *Send an image with .s as the caption,*\n*or reply to an image/video with .s*");
+            return reply(global.LANG.sticker.NEED_REPLY);
         }
 
         reply("🎨 *Creating Sticker...*");

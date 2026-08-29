@@ -3,12 +3,16 @@ let handler = async (m, { conn, usedPrefix }) => {
     let runtime = process.uptime();
     let uptime = clockString(runtime);
 
-    let message = `*Hello ${name}!* 👋\n\n` +
-                  `🤖 *Bot Name:* 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊\n` +
-                  `👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓\n` +
-                  `🛡️ *Status:* Online & Protected\n` +
-                  `⏳ *Uptime:* ${uptime}\n\n` +
-                  `_Type ${usedPrefix}menu to see my full list of features!_`;
+    let message = `
+╭━━━〔 ✧ *BOT ALIVE* ✧ 〕━━━┈
+┃ 👤 *Hello, ${name}!* 👋
+┃ 🤖 *Bot Name:* 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊
+┃ 👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
+┃ 🛡️ *Status:* Online & Protected
+┃ ⏳ *Uptime:* ${uptime}
+╰━━━━━━━━━━━━━━━━━━━━━━━━┈
+
+  _✨ Type ${usedPrefix}menu to see my features! ✨_`.trim();
 
     await conn.sendMessage(m.chat, {
         text: message,
@@ -16,8 +20,8 @@ let handler = async (m, { conn, usedPrefix }) => {
             externalAdReply: {
                 title: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 IS ALIVE",
                 body: "Developed by 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓",
-                thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg", 
-                sourceUrl: "https://instagram.com/_mr.fro_ud_",
+                thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg",
+                sourceUrl: "https://instagram.com/syam.fun",
                 mediaType: 1,
                 renderLargerThumbnail: true
             }

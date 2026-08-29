@@ -1,64 +1,78 @@
-const { cmd, commands } = require('../command');
-const { fetchJson } = require('../lib/functions');
-const yts = require('yt-search'); // Uses the same search library as .play
+const { cmd } = require('../command');
+const yts = require('yt-search');
+const ytdl = require('@distube/ytdl-core');
+const fs = require('fs');
+const path = require('path');
 
 cmd({
     pattern: "video",
     alias: ["mp4", "v", "ytv"],
-    react: "📺",
-    desc: "Download video from YouTube",
-    category: "download",
+    react: "🎥",
+    desc: global.LANG.scrapers.VIDEO_DESC || "Download a video",
+    category: "scrapers",
     filename: __filename
 },
 async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, reply }) => {
     try {
-        if (!q) return reply("Please give me a video name or link! \nExample: .video Despacito");
+        if (!q) return reply(global.LANG.scrapers.NEED_VIDEO || "Please provide a video name!");
 
-        reply("🔎 *Searching YouTube...*");
+        reply(global.LANG.scrapers.SEARCHING || "🔍 Searching...");
 
-        // 1. Search YouTube
         const search = await yts(q);
         const data = search.all[0];
+        if (!data) return reply("❌ No results found for your query.");
         const url = data.url;
 
-        // 2. Create Fancy Caption
         let caption = `
-🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *VIDEO PLAYER*
+*${global.LANG.scrapers.YTS_RESULTS || "YOUTUBE VIDEO DOWNLOADER"}*
 
-🎬 *Title:* ${data.title}
-⏱️ *Duration:* ${data.timestamp}
-👁️ *Views:* ${data.views}
-📅 *Uploaded:* ${data.ago}
-🔗 *Link:* ${url}
+*Title:* ${data.title}
+*Duration:* ${data.timestamp}
+*Views:* ${data.views}
+*URL:* ${data.url}
 
-👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
-Downloading video... Please wait! 📺
+*${global.LANG.scrapers.UPLOADING_SONG || "Downloading video..."}*
 `;
 
-        // 3. Send Thumbnail Message
         await conn.sendMessage(from, { 
             image: { url: data.thumbnail }, 
             caption: caption 
         }, { quoted: mek });
 
-        // Using Siputzx Ummy API
-        let down = await fetchJson(`https://api.siputzx.my.id/api/d/ummy?url=${url}`);
+        // Filter for MP4 formats with audio and video
+        const stream = ytdl(url, { filter: (format) => format.container === 'mp4' && format.hasAudio && format.hasVideo });
+        let tmpFile = path.join(__dirname, '../tmp', `${Date.now()}.mp4`);
         
-        if (!down.data || !down.data.url) return reply("❌ Error: Could not download video. Try a shorter video.");
+        if (!fs.existsSync(path.join(__dirname, '../tmp'))) {
+            fs.mkdirSync(path.join(__dirname, '../tmp'), { recursive: true });
+        }
 
-        // Find MP4 with audio
-        let video = down.data.url.find(item => item.ext === 'mp4' && !item.no_audio);
-        if (!video || !video.url) return reply("❌ Error: MP4 conversion failed.");
+        const writeStream = fs.createWriteStream(tmpFile);
+        stream.pipe(writeStream);
 
-        await conn.sendMessage(from, { 
-            video: { url: video.url }, 
-            mimetype: "video/mp4",
-            caption: `🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊`
-        }, { quoted: mek });
+        writeStream.on('finish', async () => {
+            try {
+                // Send Video
+                await conn.sendMessage(from, { 
+                    video: fs.readFileSync(tmpFile), 
+                    caption: `🎥 *${data.title}*`,
+                    mimetype: "video/mp4" 
+                }, { quoted: mek });
+
+                // Cleanup
+                fs.unlinkSync(tmpFile);
+            } catch (err) {
+                reply("❌ Failed to send video.");
+            }
+        });
+
+        writeStream.on('error', (err) => {
+            console.error(err);
+            reply("❌ Error writing the video file.");
+        });
 
     } catch (e) {
-        console.log(e);
-        reply("❌ Error: " + e);
+        console.error(e);
+        reply("❌ Error processing request. YouTube may be blocking downloads right now.");
     }
 });
-

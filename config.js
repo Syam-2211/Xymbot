@@ -1,16 +1,63 @@
-global.owner = ['919947121619'] // Your number
-global.ownerName = '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓' //
-global.botName = '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊' //
-global.WORKTYPE = 'public' // Bot mode: 'public' or 'private'
+const fs = require('fs');
+const path = require('path');
+
+const configPath = path.join(__dirname, 'database/bot_config.json');
+
+// Default config
+let botConfig = {
+    prefix: '.',
+    owner: ['919947121619'],
+    ownerName: '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓',
+    botName: '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊',
+    worktype: 'public',
+    sudo: []
+};
+
+// Load from database if exists
+try {
+    if (fs.existsSync(configPath)) {
+        const data = fs.readFileSync(configPath, 'utf8');
+        botConfig = { ...botConfig, ...JSON.parse(data) };
+    }
+} catch (e) {
+    console.error('Error loading bot_config.json', e);
+}
+
+// Ensure database folder exists
+try {
+    const dir = path.dirname(configPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+} catch (e) { }
+
+// Apply dynamically to globals so existing plugins continue to work flawlessly
+global.owner = botConfig.owner;
+global.ownerName = botConfig.ownerName;
+global.botName = botConfig.botName;
+global.WORKTYPE = botConfig.worktype;
+global.sudo = botConfig.sudo;
 
 // ── API KEYS ─────────────────────────────────────────────────────────────────
-// Get your FREE Gemini API key: https://aistudio.google.com/apikey
-// 1. Open the link → Sign in with Google → Click "Create API Key" → Copy it
-// 2. Paste it below between the quotes
-global.GEMINI_API_KEY = 'AQ.Ab8RN6IAn6Oy2zgTFPcqc8lX30jp5qnYC8cta_lQngYAQcRUPg'
-
-// (Optional) OpenAI key from: https://platform.openai.com/api-keys
-global.OPENAI_API_KEY = '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'
+// Please set these in your hosting environment variables or .env file!
+global.GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'your_gemini_api_key_here';
+global.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'your_openai_api_key_here';
 
 // Initializing the database for your group settings
-global.db = { data: { chats: {}, users: {} } }
+global.db = { data: { chats: {}, users: {} } };
+
+// Load language string translations
+global.LANG = require('./language.json').STRINGS;
+
+module.exports = {
+    getPrefix: () => botConfig.prefix,
+    updateSettings: (newValues) => {
+        botConfig = { ...botConfig, ...newValues };
+
+        global.owner = botConfig.owner;
+        global.ownerName = botConfig.ownerName;
+        global.botName = botConfig.botName;
+        global.WORKTYPE = botConfig.worktype;
+        global.sudo = botConfig.sudo;
+
+        fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
+    }
+};

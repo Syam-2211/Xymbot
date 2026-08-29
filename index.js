@@ -3,30 +3,47 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     makeCacheableSignalKeyStore,
-    downloadMediaMessage
+    fetchLatestBaileysVersion,
+    Browsers,
+    downloadMediaMessage,
+    getAggregateVotesInPollMessage
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
 const path = require("path");
-const http = require("http");
 require('./config');
 
-// ─── HEALTH CHECK HTTP SERVER ──────────────────────────────────────────────────
-// Exposes a simple /health endpoint so the platform can verify the container is alive.
-const PORT = process.env.PORT || 3000;
-const healthServer = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-        status: 'ok',
-        bot: global.botName || 'XYMBOT',
-        uptime: Math.floor(process.uptime()),
-        timestamp: new Date().toISOString()
-    }));
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 3000;
+
+global.pairingCode = '';
+app.get('/', (req, res) => {
+    res.send(`
+        <html>
+        <head><title>Xymbot</title></head>
+        <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
+            <h1>Xymbot is Running! 🚀</h1>
+            ${global.pairingCode ? `<h2>Pairing Code: <span style="color: blue;">${global.pairingCode}</span></h2><p>Enter this code in your WhatsApp linked devices.</p>` : '<h3>Bot is connected and ready.</h3>'}
+        </body>
+        </html>
+    `);
 });
-healthServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌐 Health server running on port ${PORT}`);
+app.listen(port, () => {
+    console.log(`🌍 Web server is running on port ${port}`);
 });
+
+// Load blocked chats globally
+global.blockedChats = [];
+const blockedChatsFile = path.join(__dirname, 'database/blocked_chats.json');
+if (fs.existsSync(blockedChatsFile)) {
+    try {
+        global.blockedChats = JSON.parse(fs.readFileSync(blockedChatsFile, 'utf8'));
+    } catch (e) {
+        console.error('Failed to parse blocked_chats.json:', e);
+    }
+}
 
 // Ensure tmp directory exists
 if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp');
@@ -55,18 +72,77 @@ function loadPlugins() {
 }
 
 async function startBot() {
+    const { version, isLatest } = await fetchLatestBaileysVersion();
     const { state, saveCreds } = await useMultiFileAuthState('session');
 
+    console.log(`🤖 Starting bot... WA v${version.join('.')} (isLatest: ${isLatest})`);
+
     const conn = makeWASocket({
+        version,
         logger: pino({ level: 'silent' }),
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
         },
-        browser: ["Syam-Bot", "Safari", "1.0.0"]
+        browser: Browsers.ubuntu('Chrome'),
     });
 
     conn.ev.on('creds.update', saveCreds);
+
+    if (!conn.authState.creds.registered) {
+        let phoneNumber = global.owner[0] ? global.owner[0].replace(/[^0-9]/g, '') : null;
+        if (phoneNumber) {
+            setTimeout(async () => {
+                try {
+                    let code = await conn.requestPairingCode(phoneNumber);
+                    code = code?.match(/.{1,4}/g)?.join("-") || code;
+                    global.pairingCode = code;
+                    console.log(`\n======================================================\n`);
+                    console.log(`📱 YOUR PAIRING CODE IS: ${code}`);
+                    console.log(`\n======================================================\n`);
+                } catch (e) {
+                    console.error('Failed to request pairing code:', e);
+                }
+            }, 3000);
+        } else {
+             console.log("No owner number found in config to request pairing code.");
+        }
+    }
+
+
+    // ─── AUDIO ID3 TAG INTERCEPTOR ──────────────────────────────────────────────
+    const originalSendMessage = conn.sendMessage.bind(conn);
+    conn.sendMessage = async (jid, content, options) => {
+        if (content && content.audio && !content.ptt && !content.id3Tagged) {
+            try {
+                const { tagAudio } = require('./plugins/audioUtil.js');
+                let audioBuffer = content.audio;
+
+                if (typeof audioBuffer === 'string' && fs.existsSync(audioBuffer)) {
+                    audioBuffer = fs.readFileSync(audioBuffer);
+                } else if (typeof audioBuffer === 'object' && audioBuffer.url && fs.existsSync(audioBuffer.url)) {
+                    audioBuffer = fs.readFileSync(audioBuffer.url);
+                }
+
+                if (Buffer.isBuffer(audioBuffer)) {
+                    let title = global.botName;
+                    let artist = global.ownerName;
+                    let thumbPath = path.join(__dirname, './assets/mention/thumb.jpg');
+                    let thumbBuf = fs.existsSync(thumbPath) ? fs.readFileSync(thumbPath) : Buffer.alloc(0);
+
+                    // Run ffmpeg tagging
+                    let taggedMp3 = await tagAudio(audioBuffer, title, artist, thumbBuf);
+
+                    // Overwrite content payload
+                    content.audio = taggedMp3;
+                    content.mimetype = 'audio/mpeg';
+                }
+            } catch (e) {
+                console.error("Failed to inject ID3 tags into outgoing audio:", e);
+            }
+        }
+        return originalSendMessage(jid, content, options);
+    };
 
     // ─── MEDIA DOWNLOAD HELPER ─────────────────────────────────────────────────
     conn.downloadAndSaveMediaMessage = async (msgObj) => {
@@ -76,8 +152,8 @@ async function startBot() {
         );
         const ext = msgType === 'imageMessage' ? 'jpg'
             : msgType === 'videoMessage' ? 'mp4'
-            : msgType === 'audioMessage' ? 'ogg'
-            : 'bin';
+                : msgType === 'audioMessage' ? 'ogg'
+                    : 'bin';
 
         const buffer = await downloadMediaMessage(
             { key: msgObj.key || {}, message: rawMsg },
@@ -93,41 +169,83 @@ async function startBot() {
     conn.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
-            console.log('📸 Scan the QR code:');
+            console.log('\n📸 SCAN THE QR CODE BELOW TO CONNECT:\n');
             qrcode.generate(qr, { small: true });
         }
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startBot();
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`⚠️ Connection closed (statusCode: ${statusCode}). Reason:`, lastDisconnect?.error?.message || 'Unknown');
+            if (shouldReconnect) {
+                console.log('🔄 Reconnecting in 3 seconds...');
+                setTimeout(startBot, 3000);
+            }
         } else if (connection === 'open') {
             console.log('✅ Connected! Bot is online.');
+
+            // Automatically set logged in / paired user as owner
+            const pairedUserJid = conn.user.id;
+            const pairedNumber = pairedUserJid ? pairedUserJid.split(':')[0].split('@')[0] : '';
+            if (!Array.isArray(global.owner)) global.owner = [];
+            if (pairedNumber && !global.owner.includes(pairedNumber)) {
+                global.owner.push(pairedNumber);
+                console.log(`👑 Paired WhatsApp account (+${pairedNumber}) registered as Bot Owner & Admin.`);
+            }
+
             loadPlugins(); // Load plugins fresh on connect
 
-            // Send startup message to owner
-            if (global.owner && global.owner.length > 0) {
-                const ownerJid = global.owner[0] + '@s.whatsapp.net';
+            // Send startup message to paired owner
+            const targetNumber = pairedNumber || (global.owner && global.owner[0]);
+            if (targetNumber) {
+                const ownerJid = targetNumber + '@s.whatsapp.net';
                 const startTime = Date.now();
                 conn.sendMessage(ownerJid, { text: '🔄 *Testing connection latency...*' }).then(async (m) => {
                     const latency = Date.now() - startTime;
                     const totalCommands = commands.length + handlerPlugins.length;
                     const msg = `*🚀 BOT CONNECTED SUCCESSFULLY!*\n\n` +
-                                `*🤖 Bot Name:* ${global.botName}\n` +
-                                `*👨‍💻 Owner:* ${global.ownerName}\n` +
-                                `*⚙️ Prefix:* .\n` +
-                                `*📦 Total Commands:* ${totalCommands}\n` +
-                                `*⚡ Latency:* ${latency}ms\n\n` +
-                                `_System ready for operations!_`;
+                        `*🤖 Bot Name:* ${global.botName}\n` +
+                        `*👨‍💻 Owner:* ${global.ownerName}\n` +
+                        `*📱 Paired Number:* +${pairedNumber}\n` +
+                        `*⚙️ Prefix:* .\n` +
+                        `*📦 Total Commands:* ${totalCommands}\n` +
+                        `*⚡ Latency:* ${latency}ms\n\n` +
+                        `_System ready for operations!_`;
                     await conn.sendMessage(ownerJid, { text: msg });
                 }).catch(() => console.log('Could not send startup message to owner.'));
             }
         }
     });
 
+    conn.ev.on('group-participants.update', async (update) => {
+        console.log('🔔 [EVENT] group-participants.update fired:', JSON.stringify(update));
+        try {
+            const groupUpdateHandler = require('./plugins/groupUpdate.js');
+            const m = { chat: update.id };
+            // Fetch group metadata for subject and member count
+            try {
+                m.metadata = await conn.groupMetadata(update.id);
+            } catch (e) {
+                console.error('Failed to fetch groupMetadata:', e);
+                m.metadata = { subject: 'the group', participants: [] };
+            }
+            await groupUpdateHandler(m, { conn, participants: update.participants, action: update.action });
+        } catch (e) {
+            console.error('Group Update Error:', e);
+        }
+    });
+
+
+
     conn.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const m = chatUpdate.messages[0];
             if (!m || !m.message) return;
             if (m.key.remoteJid === 'status@broadcast') return;
+
+            // Ignore old messages (older than 60 seconds) so the bot doesn't process backlog on startup
+            const msgTime = m.messageTimestamp;
+            const currentTime = Math.floor(Date.now() / 1000);
+            if (msgTime && (currentTime - msgTime > 60)) return;
 
             // ── Set up core message properties ───────────────────────────────
             m.chat = m.key.remoteJid;
@@ -141,10 +259,11 @@ async function startBot() {
             // Set m.reply so handler-style plugins can use it
             m.reply = (text) => conn.sendMessage(m.chat, { text: String(text) }, { quoted: m });
 
-            // Detect message type
             m.type = Object.keys(m.message).find(k =>
                 !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)
             ) || 'conversation';
+
+
 
             // Detect quoted/replied-to message
             const ctxInfo = m.message?.extendedTextMessage?.contextInfo
@@ -183,40 +302,68 @@ async function startBot() {
                 || m.message.listResponseMessage?.singleSelectReply?.selectedRowId
                 || '';
 
-            const prefix = '.';
-            if (!body.startsWith(prefix)) return;
-
-            const args = body.slice(prefix.length).trim().split(/ +/);
-            const command = args.shift().toLowerCase();
+            const prefix = require('./config').getPrefix() || '.';
+            const isCmd = body.startsWith(prefix);
+            const command = isCmd ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : '';
+            const args = isCmd ? body.slice(prefix.length).trim().split(/ +/).slice(1) : body.trim().split(/ +/);
             const q = args.join(' ');
 
-            // ── Determine ownership ───────────────────────────────────────────
-            const isOwner = !!(global.owner && global.owner.includes(m.senderNumber));
+            // ── Determine ownership (paired account, fromMe, or global.owner) ──
+            const normalizeJid = (jid) => jid ? jid.split(':')[0].split('@')[0] + '@s.whatsapp.net' : jid;
+            const botJid = normalizeJid(conn.user.id);
+            const botNumber = conn.user.id ? conn.user.id.split(':')[0].split('@')[0] : '';
+
+            const isFromMe = m.key.fromMe === true;
+            const isPairedUser = m.senderNumber === botNumber || normalizeJid(m.sender) === botJid;
+            const isConfigOwner = Array.isArray(global.owner) && global.owner.includes(m.senderNumber);
+            const isOwner = isFromMe || isPairedUser || isConfigOwner;
+            const isSudo = Array.isArray(global.sudo) && global.sudo.includes(m.senderNumber);
 
             if (global.WORKTYPE === 'private' && !isOwner) return;
+            if (global.WORKTYPE === 'sudo' && !isOwner && !isSudo) return;
 
-            // ── Determine group admin status ──────────────────────────────────
+            // ── Determine group admin status (Owner is automatically Admin) ────
             const from = m.chat;
-            const normalizeJid = (jid) => jid ? jid.split(':')[0].split('@')[0] + '@s.whatsapp.net' : jid;
-            const botNumber = normalizeJid(conn.user.id);
             let groupMetadata = null, groupName = '', participants = [],
-                groupAdmins = [], isBotAdmins = false, isAdmins = false;
+                groupAdmins = [], isBotAdmins = false, isAdmins = isOwner;
 
             if (m.isGroup) {
                 try {
                     groupMetadata = await conn.groupMetadata(from);
                     groupName = groupMetadata.subject;
                     participants = groupMetadata.participants;
+                    const botLidStr = conn.user.lid ? conn.user.lid.split(':')[0].split('@')[0] : '';
                     groupAdmins = participants.filter(v => v.admin === 'admin' || v.admin === 'superadmin').map(v => normalizeJid(v.id));
-                    isBotAdmins = groupAdmins.includes(botNumber);
-                    isAdmins = groupAdmins.includes(normalizeJid(m.sender));
-                } catch (_) {}
+                    isBotAdmins = groupAdmins.some(adminJid => adminJid.startsWith(botNumber) || (botLidStr && adminJid.startsWith(botLidStr)));
+                    isAdmins = isOwner || groupAdmins.includes(normalizeJid(m.sender));
+                } catch (_) {
+                    if (isOwner) isAdmins = true;
+                }
             }
 
-            const reply = (text) => conn.sendMessage(from, { text: String(text) }, { quoted: m });
+            const reply = async (text) => {
+                const textStr = String(text);
+                const res = await conn.sendMessage(from, { text: textStr }, { quoted: m });
+                if (textStr.toLowerCase().includes('error')) {
+                    try {
+                        const fs = require('fs');
+                        const path = require('path');
+                        const errorAudio = fs.readFileSync(path.join(__dirname, 'assets/audio/error.mp3'));
+                        await conn.sendMessage(from, { audio: errorAudio, mimetype: 'audio/mpeg', ptt: false, id3Tagged: true }, { quoted: m });
+                    } catch (e) {
+                        console.error('Failed to send error audio:', e);
+                    }
+                }
+                return res;
+            };
+
+            // ── Check Blocked Chat ──────────────────────────────────────────────
+            const isBlockedChat = global.blockedChats && global.blockedChats.includes(from);
 
             // ── Run handler-style plugins ─────────────────────────────────────
             for (const plugin of handlerPlugins) {
+                if (isBlockedChat && !isOwner) continue;
+
                 try {
                     const match = plugin.command instanceof RegExp
                         ? plugin.command.test(command)
@@ -244,18 +391,33 @@ async function startBot() {
                 }
             }
 
+            let isExactCommandMatch = false;
+
             // ── Run cmd-style plugins ─────────────────────────────────────────
             for (const cmd of commands) {
+                if (isBlockedChat && !isOwner) {
+                    // Bypass block ONLY for the mention auto-responder
+                    if (cmd.desc !== 'Auto-responds when bot or SUDO is mentioned') {
+                        continue;
+                    }
+                }
+
                 try {
-                    const match = cmd.pattern === command
-                        || (cmd.alias && cmd.alias.includes(command));
+                    let match = false;
+                    if (isCmd && (cmd.pattern === command || (cmd.alias && cmd.alias.includes(command)))) {
+                        match = true;
+                        isExactCommandMatch = true;
+                    } else if (cmd.on === 'text') {
+                        match = true;
+                    }
 
                     if (match) {
                         const sender = m.sender;
                         const senderNumber = m.senderNumber;
                         const pushname = m.pushName;
-                        const isMe = botNumber === sender;
+                        const isMe = isOwner || botJid === normalizeJid(sender);
                         const isGroup = m.isGroup;
+                        const botLid = conn.user.lid ? conn.user.lid.split(':')[0] : '';
 
                         await cmd.function(conn, m, m, {
                             from,
@@ -270,6 +432,7 @@ async function startBot() {
                             senderNumber,
                             botNumber2: botNumber,
                             botNumber,
+                            botLid,
                             pushname,
                             isMe,
                             isOwner,
@@ -281,9 +444,60 @@ async function startBot() {
                             isAdmins,
                             reply
                         });
+
+                        // Custom Audio logic
+                        if (isCmd && global.cmdAudio && !m.audioPlayed) {
+                            let matchedCmd = null;
+                            if (global.cmdAudio[command]) matchedCmd = command;
+                            else if (cmd.alias) {
+                                for (let alias of cmd.alias) {
+                                    if (global.cmdAudio[alias]) {
+                                        matchedCmd = alias;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!matchedCmd && typeof cmd.pattern === 'string' && global.cmdAudio[cmd.pattern]) {
+                                matchedCmd = cmd.pattern;
+                            }
+
+                            if (matchedCmd) {
+                                const audioFile = global.cmdAudio[matchedCmd];
+                                const fs = require('fs');
+                                if (fs.existsSync(audioFile)) {
+                                    try {
+                                        m.audioPlayed = true; // Prevent playing multiple times for the same message
+                                        await conn.sendMessage(from, { 
+                                            audio: fs.readFileSync(audioFile), 
+                                            mimetype: 'audio/ogg; codecs=opus', 
+                                            ptt: true 
+                                        }, { quoted: m });
+                                    } catch(e) {
+                                        console.error('Failed to send custom cmd audio:', e);
+                                    }
+                                }
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error(`CMD Plugin Error [${cmd.pattern}]:`, e.message);
+                }
+            }
+
+            // Spelling Check Logic (Command Not Found)
+            if (isCmd && command && !isExactCommandMatch && global.cmdAudio && global.cmdAudio['spelling']) {
+                const fs = require('fs');
+                const audioFile = global.cmdAudio['spelling'];
+                if (fs.existsSync(audioFile)) {
+                    try {
+                        await conn.sendMessage(from, { 
+                            audio: fs.readFileSync(audioFile), 
+                            mimetype: 'audio/ogg; codecs=opus', 
+                            ptt: true 
+                        }, { quoted: m });
+                    } catch(e) {
+                        console.error('Failed to send spelling audio:', e);
+                    }
                 }
             }
 

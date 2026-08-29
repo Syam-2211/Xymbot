@@ -1,38 +1,37 @@
-const { cmd, commands } = require('../command');
-const { fetchJson } = require('../lib/functions');
+const { cmd } = require('../command');
 const yts = require('yt-search'); 
+const ytdl = require('@distube/ytdl-core');
+const fs = require('fs');
+const path = require('path');
 
 cmd({
     pattern: "play",
     alias: ["song", "music", "ytmp3"],
-    react: "🎧",
-    desc: "Download song from YouTube",
-    category: "download",
+    react: "🎶",
+    desc: global.LANG.scrapers.SONG_DESC || "Download a song",
+    category: "scrapers",
     filename: __filename
 },
 async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, reply }) => {
     try {
-        if (!q) return reply("Please give me a song name! \nExample: .play Despacito");
+        if (!q) return reply(global.LANG.scrapers.NEED_TEXT_SONG || "Please provide a song name!");
 
-        reply("🔎 *Searching for your song...*");
+        reply(global.LANG.scrapers.SEARCHING || "🔍 Searching...");
 
         const search = await yts(q);
-        if (!search.all || search.all.length === 0) return reply("❌ Song not found!");
-        
         const data = search.all[0];
+        if (!data) return reply("❌ No results found for your query.");
         const url = data.url;
 
         let caption = `
-🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 *MUSIC PLAYER*
+*${global.LANG.scrapers.YTS_RESULTS || "YOUTUBE DOWNLOADER"}*
 
-🎵 *Title:* ${data.title}
-⏱️ *Duration:* ${data.timestamp}
-👁️ *Views:* ${data.views}
-📅 *Uploaded:* ${data.ago}
-🔗 *Link:* ${url}
+*Title:* ${data.title}
+*Duration:* ${data.timestamp}
+*Views:* ${data.views}
+*URL:* ${data.url}
 
-👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
-Downloading audio... Please wait! 🎧
+*${global.LANG.scrapers.UPLOADING_SONG || "Downloading audio..."}*
 `;
 
         await conn.sendMessage(from, { 
@@ -40,21 +39,39 @@ Downloading audio... Please wait! 🎧
             caption: caption 
         }, { quoted: mek });
 
-        // Using Siputzx Ummy API
-        let down = await fetchJson(`https://api.siputzx.my.id/api/d/ummy?url=${url}`);
+        const stream = ytdl(url, { filter: 'audioonly', quality: 'highestaudio' });
+        let tmpFile = path.join(__dirname, '../tmp', `${Date.now()}.mp3`);
         
-        if (!down.data || !down.data.url) return reply("❌ Error: Could not download audio. Try another song.");
+        // Ensure tmp folder exists
+        if (!fs.existsSync(path.join(__dirname, '../tmp'))) {
+            fs.mkdirSync(path.join(__dirname, '../tmp'), { recursive: true });
+        }
 
-        let audio = down.data.url.find(item => item.ext === 'mp3');
-        if (!audio || !audio.url) return reply("❌ Error: MP3 conversion failed.");
+        const writeStream = fs.createWriteStream(tmpFile);
+        stream.pipe(writeStream);
 
-        await conn.sendMessage(from, { 
-            audio: { url: audio.url }, 
-            mimetype: "audio/mpeg" 
-        }, { quoted: mek });
+        writeStream.on('finish', async () => {
+            try {
+                // Send Audio
+                await conn.sendMessage(from, { 
+                    audio: fs.readFileSync(tmpFile), 
+                    mimetype: "audio/mpeg" 
+                }, { quoted: mek });
+
+                // Cleanup
+                fs.unlinkSync(tmpFile);
+            } catch (err) {
+                reply("❌ Failed to send audio.");
+            }
+        });
+
+        writeStream.on('error', (err) => {
+            console.error(err);
+            reply("❌ Error writing the audio file.");
+        });
 
     } catch (e) {
-        console.log(e);
-        reply("❌ Error: " + e.message);
+        console.error(e);
+        reply("❌ Error processing request. YouTube may be blocking downloads right now.");
     }
 });

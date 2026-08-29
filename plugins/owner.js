@@ -1,27 +1,39 @@
-let handler = async (m, { conn }) => {
-    const ownerNumber = '919947121619'; // Your number
-    const ownerName = '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓'; // Your name
-    
-    // Rotating images for the Ad-style VCard
-    const images = [
-        'https://telegra.ph/file/your-image1.jpg',
-        'https://telegra.ph/file/your-image2.jpg',
-        'https://telegra.ph/file/your-image3.jpg'
-    ];
-    const randomImage = images[Math.floor(Math.random() * images.length)];
+const { cmd } = require('../command');
 
-    // VCard Details
-    const vcard = 'BEGIN:VCARD\n' +
-                'VERSION:3.0\n' +
-                `FN:${ownerName}\n` +
-                `TEL;type=CELL;type=VOICE;waid=${ownerNumber}:+${ownerNumber}\n` +
-                'END:VCARD';
+cmd({
+    pattern: "owner",
+    alias: ["creator", "donate"],
+    react: "👑",
+    desc: "Get owner details",
+    category: "owner",
+    filename: __filename
+},
+async (conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, reply }) => {
+    try {
+        // Fetch from global config so it stays updated
+        const ownerNumber = (global.owner && global.owner[0]) ? global.owner[0] : '919947121619'; 
+        const ownerName = global.ownerName || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓'; 
+        
+        // VCard Details
+        const vcard = 'BEGIN:VCARD\n' +
+                    'VERSION:3.0\n' +
+                    `FN:${ownerName}\n` +
+                    `TEL;type=CELL;type=VOICE;waid=${ownerNumber}:+${ownerNumber}\n` +
+                    'END:VCARD';
 
-    // Main message body with Donate/Social info
-    let ownerMsg = `
+        // Send the VCard contact first
+        await conn.sendMessage(from, {
+            contacts: {
+                displayName: ownerName,
+                contacts: [{ vcard }]
+            }
+        }, { quoted: mek });
+        
+        // Send the info text separately (Baileys cannot reliably send contacts + text + adReply in one block)
+        let ownerMsg = `
 👑 *OWNER & DEVELOPER* 👑
 ┠─👤 *Name:* ${ownerName}
-┠─🤖 *Bot:* 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊
+┠─🤖 *Bot:* ${global.botName || '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊'}
 ┕━━━━━━━━━━━━━━━━━━━
 
 ✨ *DONATE / SUPPORT* ✨
@@ -34,30 +46,22 @@ If you'd like to support the project, please reach out or follow me here:
 _Thank you for using my bot!_ ❤️
 `.trim();
 
-    // Send the VCard with the Ad-Style interface and text
-    await conn.sendMessage(m.chat, {
-        contacts: {
-            displayName: ownerName,
-            contacts: [{ vcard }]
-        },
-        text: ownerMsg,
-        contextInfo: {
-            externalAdReply: {
-                title: `Contact & Support: ${ownerName}`,
-                body: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 Official Developer",
-                thumbnailUrl: randomImage,
-                sourceUrl: `https://wa.me/${ownerNumber}`,
-                mediaType: 1,
-                renderLargerThumbnail: true,
-                showAdAttribution: true
+        await conn.sendMessage(from, { 
+            text: ownerMsg,
+            contextInfo: {
+                externalAdReply: {
+                    title: `Contact & Support: ${ownerName}`,
+                    body: `${global.botName} Official Developer`,
+                    thumbnailUrl: 'https://files.catbox.moe/nbn8w8.jpeg',
+                    sourceUrl: `https://wa.me/${ownerNumber}`,
+                    mediaType: 1,
+                    renderLargerThumbnail: true,
+                    showAdAttribution: true
+                }
             }
-        }
-    }, { quoted: m });
-};
-
-handler.help = ['owner', 'donate'];
-handler.tags = ['main'];
-handler.command = /^(owner|creator|donate)$/i;
-
-module.exports = handler;
-
+        }, { quoted: mek });
+    } catch (e) {
+        console.log(e);
+        reply("❌ Error: " + e);
+    }
+});

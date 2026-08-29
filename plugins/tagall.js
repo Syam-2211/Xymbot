@@ -7,15 +7,15 @@ cmd({
     pattern: "tagall",
     alias: ["everyone", "all"],
     react: "📢",
-    desc: "Tag all group members",
+    desc: global.LANG.tagall.TAGALL_DESC,
     category: "group",
     filename: __filename
 },
 async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, participants, groupAdmins, isBotAdmins, isAdmins, reply }) => {
     try {
         // 1. Safety Checks
-        if (!isGroup) return reply("⚠️ This command is only for groups!");
-        if (!isAdmins) return reply("⚠️ Only Admins can use this!");
+        if (!isGroup) return reply(global.LANG.group.GROUP_COMMAND);
+        if (!isAdmins) return reply(global.LANG.group.NOT_ADMIN);
 
         // 2. Prepare the Message
         let text = `
@@ -55,8 +55,8 @@ cmd({
 },
 async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, participants, groupAdmins, isBotAdmins, isAdmins, reply }) => {
     try {
-        if (!isGroup) return reply("⚠️ Only for groups!");
-        if (!isAdmins) return reply("⚠️ Only Admins can use this!");
+        if (!isGroup) return reply(global.LANG.group.GROUP_COMMAND);
+        if (!isAdmins) return reply(global.LANG.group.NOT_ADMIN);
 
         // If user replies to a message, use that message as the hidetag
         // If not, use the text they typed (e.g. .hidetag Hello)
