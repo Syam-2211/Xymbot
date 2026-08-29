@@ -24,6 +24,14 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Create Session
+        run: |
+          mkdir -p session
+          echo "${{ secrets.SESSION_ID }}" | base64 -d > session/creds.json
+        if: env.SESSION_ID != ''
+        env:
+          SESSION_ID: ${{ secrets.SESSION_ID }}
+
       - name: Start the Bot
         run: npm start
         env:
