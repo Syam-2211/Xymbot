@@ -27,8 +27,17 @@ jobs:
       - name: Create Session
         run: |
           mkdir -p session
-          echo "${{ secrets.SESSION_ID }}" | base64 -d > session/creds.json
-        if: env.SESSION_ID != ''
+          node -e "
+            const fs = require('fs');
+            let data = process.env.SESSION_ID || '';
+            if (data) {
+              data = data.replace('XYMBOT~', '').trim();
+              fs.writeFileSync('session/creds.json', Buffer.from(data, 'base64'));
+              console.log('✅ Session file successfully generated from secret!');
+            } else {
+              console.log('❌ No SESSION_ID secret found!');
+            }
+          "
         env:
           SESSION_ID: ${{ secrets.SESSION_ID }}
 
