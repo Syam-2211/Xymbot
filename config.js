@@ -23,7 +23,7 @@ const configPath = path.join(__dirname, 'database/bot_config.json');
 // Default config
 let botConfig = {
     prefix: '.',
-    owner: ['919947121619'],
+    owner: ['919947121619', '918075495063'],
     ownerName: '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓',
     botName: '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊',
     worktype: 'public',

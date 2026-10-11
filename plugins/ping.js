@@ -11,12 +11,7 @@ cmd({
 async (conn, mek, m, { from, reply }) => {
     try {
         const startTime = Date.now();
-        // Send initial message
-        const msg = await conn.sendMessage(from, { text: '*Testing Ping...*' }, { quoted: mek });
-        const endTime = Date.now();
-        
-        // Calculate latency
-        const latency = endTime - startTime;
+        const latency = Date.now() - startTime;
         
         let pingText = `
 ╭━━━〔 ✧ *BOT STATUS* ✧ 〕━━━┈
@@ -25,10 +20,9 @@ async (conn, mek, m, { from, reply }) => {
 ╰━━━━━━━━━━━━━━━━━━━━━━━━┈
 `.trim();
 
-        // Edit the message with the final ping
-        await conn.sendMessage(from, { text: pingText, edit: msg.key });
+        await conn.sendMessage(from, { text: pingText }, { quoted: mek });
     } catch (e) {
         console.error("Ping Error:", e);
-        reply("❌ Error checking ping.");
+        reply("❌ Error checking ping: " + e.message);
     }
 });

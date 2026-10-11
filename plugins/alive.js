@@ -14,19 +14,23 @@ let handler = async (m, { conn, usedPrefix }) => {
 
   _✨ Type ${usedPrefix}menu to see my features! ✨_`.trim();
 
-    await conn.sendMessage(m.chat, {
-        text: message,
-        contextInfo: {
-            externalAdReply: {
-                title: "🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 IS ALIVE",
-                body: "Developed by 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓",
-                thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg",
-                sourceUrl: "https://instagram.com/syam.fun",
-                mediaType: 1,
-                renderLargerThumbnail: true
+    try {
+        await conn.sendMessage(m.chat, {
+            text: message,
+            contextInfo: {
+                externalAdReply: {
+                    title: (global.botName || "XYMBOT") + " IS ALIVE",
+                    body: "Developed by " + (global.ownerName || "Owner"),
+                    thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg",
+                    sourceUrl: "https://instagram.com/syam.fun",
+                    mediaType: 1,
+                    renderLargerThumbnail: true
+                }
             }
-        }
-    }, { quoted: m });
+        }, { quoted: m });
+    } catch (_) {
+        await conn.sendMessage(m.chat, { text: message }, { quoted: m });
+    }
 };
 
 handler.help = ['alive'];

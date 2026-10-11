@@ -105,6 +105,7 @@ function loadPlugins() {
     }
     console.log(`✅ Loaded ${handlerPlugins.length} handler plugins, ${commands.length} cmd plugins.`);
 }
+loadPlugins(); // Load plugins on initial startup
 
 async function startBot() {
     // ─── LICENSE KEY VERIFICATION ──────────────────────────────────────────────
@@ -311,267 +312,312 @@ async function startBot() {
 
 
 
+    const botStartTime = Math.floor(Date.now() / 1000);
+
     conn.ev.on('messages.upsert', async (chatUpdate) => {
         try {
-            const m = chatUpdate.messages[0];
-            if (!m || !m.message) return;
-            if (m.key.remoteJid === 'status@broadcast') return;
+            if (!chatUpdate.messages || !chatUpdate.messages.length) return;
 
-            // Ignore old messages (older than 60 seconds) so the bot doesn't process backlog on startup
-            const msgTime = m.messageTimestamp;
-            const currentTime = Math.floor(Date.now() / 1000);
-            if (msgTime && (currentTime - msgTime > 60)) return;
+            for (const m of chatUpdate.messages) {
+                if (!m || !m.message) continue;
+                if (m.key.remoteJid === 'status@broadcast') continue;
 
-            // ── Set up core message properties ───────────────────────────────
-            m.chat = m.key.remoteJid;
-            m.isGroup = m.chat.endsWith('@g.us');
-            m.sender = m.key.fromMe
-                ? conn.user.id
-                : (m.key.participant || m.key.remoteJid);
-            m.senderNumber = m.sender.split('@')[0].split(':')[0];
-            m.pushName = m.pushName || 'User';
+                // Safely convert message timestamp (handles protobuf Long object, number, or string)
+                const rawTimestamp = m.messageTimestamp;
+                const msgTimestamp = typeof rawTimestamp === 'object' && rawTimestamp !== null
+                    ? (rawTimestamp.low || (typeof rawTimestamp.toNumber === 'function' ? rawTimestamp.toNumber() : 0))
+                    : Number(rawTimestamp) || 0;
 
-            // Set m.reply so handler-style plugins can use it
-            m.reply = (text) => conn.sendMessage(m.chat, { text: String(text) }, { quoted: m });
+                // Ignore startup backlog messages that were sent BEFORE this bot process booted up
+                if (msgTimestamp && msgTimestamp < (botStartTime - 5)) continue;
 
-            m.type = Object.keys(m.message).find(k =>
-                !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)
-            ) || 'conversation';
-
-
-
-            // Detect quoted/replied-to message
-            const ctxInfo = m.message?.extendedTextMessage?.contextInfo
-                || m.message?.imageMessage?.contextInfo
-                || m.message?.videoMessage?.contextInfo
-                || m.message?.audioMessage?.contextInfo;
-
-            if (ctxInfo?.quotedMessage) {
-                const qType = Object.keys(ctxInfo.quotedMessage)
-                    .find(k => !['messageContextInfo'].includes(k));
-                m.quoted = {
-                    type: qType,
-                    message: ctxInfo.quotedMessage,
-                    key: {
-                        id: ctxInfo.stanzaId,
-                        remoteJid: m.chat,
-                        fromMe: false,
-                        participant: ctxInfo.participant
-                    }
-                };
-                m.quoted.download = () => conn.downloadAndSaveMediaMessage({
-                    key: m.quoted.key,
-                    message: ctxInfo.quotedMessage
-                });
-            } else {
-                m.quoted = null;
-            }
-
-            // ── Parse body ────────────────────────────────────────────────────
-            const body = m.message.conversation
-                || m.message.extendedTextMessage?.text
-                || m.message.imageMessage?.caption
-                || m.message.videoMessage?.caption
-                || m.message.buttonsResponseMessage?.selectedButtonId
-                || m.message.templateButtonReplyMessage?.selectedId
-                || m.message.listResponseMessage?.singleSelectReply?.selectedRowId
-                || '';
-
-            const prefix = require('./config').getPrefix() || '.';
-            const isCmd = body.startsWith(prefix);
-            const command = isCmd ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : '';
-            const args = isCmd ? body.slice(prefix.length).trim().split(/ +/).slice(1) : body.trim().split(/ +/);
-            const q = args.join(' ');
-
-            // ── Determine ownership (paired account, fromMe, or global.owner) ──
-            const normalizeJid = (jid) => jid ? jid.split(':')[0].split('@')[0] + '@s.whatsapp.net' : jid;
-            const botJid = normalizeJid(conn.user.id);
-            const botNumber = conn.user.id ? conn.user.id.split(':')[0].split('@')[0] : '';
-
-            const isFromMe = m.key.fromMe === true;
-            const isPairedUser = m.senderNumber === botNumber || normalizeJid(m.sender) === botJid;
-            const isConfigOwner = Array.isArray(global.owner) && global.owner.includes(m.senderNumber);
-            const isOwner = isFromMe || isPairedUser || isConfigOwner;
-            const isSudo = Array.isArray(global.sudo) && global.sudo.includes(m.senderNumber);
-
-            if (global.WORKTYPE === 'private' && !isOwner) return;
-            if (global.WORKTYPE === 'sudo' && !isOwner && !isSudo) return;
-
-            // ── Determine group admin status (Owner is automatically Admin) ────
-            const from = m.chat;
-            let groupMetadata = null, groupName = '', participants = [],
-                groupAdmins = [], isBotAdmins = false, isAdmins = isOwner;
-
-            if (m.isGroup) {
-                try {
-                    groupMetadata = await conn.groupMetadata(from);
-                    groupName = groupMetadata.subject;
-                    participants = groupMetadata.participants;
-                    const botLidStr = conn.user.lid ? conn.user.lid.split(':')[0].split('@')[0] : '';
-                    groupAdmins = participants.filter(v => v.admin === 'admin' || v.admin === 'superadmin').map(v => normalizeJid(v.id));
-                    isBotAdmins = groupAdmins.some(adminJid => adminJid.startsWith(botNumber) || (botLidStr && adminJid.startsWith(botLidStr)));
-                    isAdmins = isOwner || groupAdmins.includes(normalizeJid(m.sender));
-                } catch (_) {
-                    if (isOwner) isAdmins = true;
+                // Unwrap any nested message wrappers (ephemeral, view-once, document-with-caption, edited)
+                let message = m.message;
+                while (
+                    message?.ephemeralMessage?.message ||
+                    message?.viewOnceMessage?.message ||
+                    message?.viewOnceMessageV2?.message ||
+                    message?.documentWithCaptionMessage?.message ||
+                    message?.editedMessage?.message?.protocolMessage?.editedMessage
+                ) {
+                    message = (
+                        message?.ephemeralMessage?.message ||
+                        message?.viewOnceMessage?.message ||
+                        message?.viewOnceMessageV2?.message ||
+                        message?.documentWithCaptionMessage?.message ||
+                        message?.editedMessage?.message?.protocolMessage?.editedMessage
+                    );
                 }
-            }
 
-            const reply = async (text) => {
-                const textStr = String(text);
-                const res = await conn.sendMessage(from, { text: textStr }, { quoted: m });
-                if (textStr.toLowerCase().includes('error')) {
+                // ── Set up core message properties ───────────────────────────────
+                m.chat = m.key.remoteJid;
+                m.isGroup = m.chat.endsWith('@g.us');
+                m.sender = m.key.fromMe
+                    ? (conn.user.id || conn.user.jid)
+                    : (m.key.participant || m.key.remoteJid);
+                m.senderNumber = m.sender ? m.sender.split('@')[0].split(':')[0] : '';
+                m.pushName = m.pushName || 'User';
+
+                // Set m.reply so handler-style plugins can use it
+                m.reply = (text) => conn.sendMessage(m.chat, { text: String(text) }, { quoted: m });
+
+                m.type = Object.keys(message).find(k =>
+                    !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)
+                ) || 'conversation';
+
+                // Detect quoted/replied-to message
+                const ctxInfo = message?.extendedTextMessage?.contextInfo
+                    || message?.imageMessage?.contextInfo
+                    || message?.videoMessage?.contextInfo
+                    || message?.audioMessage?.contextInfo;
+
+                if (ctxInfo?.quotedMessage) {
+                    const qType = Object.keys(ctxInfo.quotedMessage)
+                        .find(k => !['messageContextInfo'].includes(k));
+                    m.quoted = {
+                        type: qType,
+                        message: ctxInfo.quotedMessage,
+                        key: {
+                            id: ctxInfo.stanzaId,
+                            remoteJid: m.chat,
+                            fromMe: false,
+                            participant: ctxInfo.participant
+                        }
+                    };
+                    m.quoted.download = () => conn.downloadAndSaveMediaMessage({
+                        key: m.quoted.key,
+                        message: ctxInfo.quotedMessage
+                    });
+                } else {
+                    m.quoted = null;
+                }
+
+                // ── Parse body ────────────────────────────────────────────────────
+                const body = (
+                    message?.conversation
+                    || message?.extendedTextMessage?.text
+                    || message?.imageMessage?.caption
+                    || message?.videoMessage?.caption
+                    || message?.buttonsResponseMessage?.selectedButtonId
+                    || message?.templateButtonReplyMessage?.selectedId
+                    || message?.listResponseMessage?.singleSelectReply?.selectedRowId
+                    || message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson
+                    || ''
+                ).trim();
+
+                const prefix = (require('./config').getPrefix() || '.').trim();
+                const isCmd = prefix ? body.startsWith(prefix) : true;
+                const command = isCmd
+                    ? (prefix ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : body.split(/ +/).shift().toLowerCase())
+                    : '';
+                const args = isCmd
+                    ? (prefix ? body.slice(prefix.length).trim().split(/ +/).slice(1) : body.split(/ +/).slice(1))
+                    : body.split(/ +/);
+                const q = args.join(' ');
+
+                // ── Determine ownership (paired account, fromMe, or global.owner) ──
+                const normalizeJid = (jid) => jid ? jid.split(':')[0].split('@')[0] + '@s.whatsapp.net' : jid;
+                const botJid = normalizeJid(conn.user.id);
+                const botNumber = conn.user.id ? conn.user.id.split(':')[0].split('@')[0] : '';
+
+                const isFromMe = m.key.fromMe === true;
+                const isPairedUser = m.senderNumber === botNumber || normalizeJid(m.sender) === botJid;
+                const isConfigOwner = Array.isArray(global.owner) && global.owner.includes(m.senderNumber);
+                const isOwner = isFromMe || isPairedUser || isConfigOwner;
+                const isSudo = Array.isArray(global.sudo) && global.sudo.includes(m.senderNumber);
+
+                if (isCmd && command) {
+                    console.log(`⚡ [COMMAND] '.${command}' from ${m.senderNumber} (${isOwner ? 'Owner' : 'User'}) in ${m.isGroup ? 'Group ' + m.chat : 'Private Chat'}`);
+                }
+
+                if (global.WORKTYPE === 'private' && !isOwner) {
+                    if (isCmd && command) console.log(`🔒 Command '.${command}' ignored: Bot is in PRIVATE mode.`);
+                    continue;
+                }
+                if (global.WORKTYPE === 'sudo' && !isOwner && !isSudo) {
+                    if (isCmd && command) console.log(`👑 Command '.${command}' ignored: Bot is in SUDO mode.`);
+                    continue;
+                }
+
+                // ── Determine group admin status (Owner is automatically Admin) ────
+                const from = m.chat;
+                let groupMetadata = null, groupName = '', participants = [],
+                    groupAdmins = [], isBotAdmins = false, isAdmins = isOwner;
+
+                if (m.isGroup && (isCmd || isOwner)) {
                     try {
-                        const fs = require('fs');
-                        const path = require('path');
-                        const errorAudio = fs.readFileSync(path.join(__dirname, 'assets/audio/error.mp3'));
-                        await conn.sendMessage(from, { audio: errorAudio, mimetype: 'audio/mpeg', ptt: false, id3Tagged: true }, { quoted: m });
+                        groupMetadata = await conn.groupMetadata(from);
+                        groupName = groupMetadata?.subject || '';
+                        participants = groupMetadata?.participants || [];
+                        const botLidStr = conn.user.lid ? conn.user.lid.split(':')[0].split('@')[0] : '';
+                        groupAdmins = participants.filter(v => v.admin === 'admin' || v.admin === 'superadmin').map(v => normalizeJid(v.id));
+                        isBotAdmins = groupAdmins.some(adminJid => adminJid.startsWith(botNumber) || (botLidStr && adminJid.startsWith(botLidStr)));
+                        isAdmins = isOwner || groupAdmins.includes(normalizeJid(m.sender));
+                    } catch (_) {
+                        if (isOwner) isAdmins = true;
+                    }
+                }
+
+                const reply = async (text) => {
+                    const textStr = String(text);
+                    const res = await conn.sendMessage(from, { text: textStr }, { quoted: m });
+                    if (textStr.toLowerCase().includes('error')) {
+                        try {
+                            const fs = require('fs');
+                            const path = require('path');
+                            const errorAudio = fs.readFileSync(path.join(__dirname, 'assets/audio/error.mp3'));
+                            await conn.sendMessage(from, { audio: errorAudio, mimetype: 'audio/mpeg', ptt: false, id3Tagged: true }, { quoted: m });
+                        } catch (e) {
+                            console.error('Failed to send error audio:', e);
+                        }
+                    }
+                    return res;
+                };
+
+                // ── Check Blocked Chat ──────────────────────────────────────────────
+                const isBlockedChat = global.blockedChats && global.blockedChats.includes(from);
+
+                let isExactCommandMatch = false;
+
+                // ── Run handler-style plugins ─────────────────────────────────────
+                for (const plugin of handlerPlugins) {
+                    if (isBlockedChat && !isOwner) continue;
+
+                    try {
+                        const match = plugin.command instanceof RegExp
+                            ? plugin.command.test(command)
+                            : Array.isArray(plugin.command)
+                                ? plugin.command.includes(command)
+                                : plugin.command === command;
+
+                        if (match) {
+                            isExactCommandMatch = true;
+                            console.log(`⚡ Executing handler plugin for: ${command}`);
+                            await plugin(m, {
+                                conn,
+                                args,
+                                q,
+                                usedPrefix: prefix,
+                                command,
+                                isOwner,
+                                isAdmin: isAdmins,
+                                isBotAdmin: isBotAdmins,
+                                isROwner: isOwner,
+                                from,
+                                reply
+                            });
+                        }
                     } catch (e) {
-                        console.error('Failed to send error audio:', e);
-                    }
-                }
-                return res;
-            };
-
-            // ── Check Blocked Chat ──────────────────────────────────────────────
-            const isBlockedChat = global.blockedChats && global.blockedChats.includes(from);
-
-            // ── Run handler-style plugins ─────────────────────────────────────
-            for (const plugin of handlerPlugins) {
-                if (isBlockedChat && !isOwner) continue;
-
-                try {
-                    const match = plugin.command instanceof RegExp
-                        ? plugin.command.test(command)
-                        : Array.isArray(plugin.command)
-                            ? plugin.command.includes(command)
-                            : plugin.command === command;
-
-                    if (match) {
-                        await plugin(m, {
-                            conn,
-                            args,
-                            q,
-                            usedPrefix: prefix,
-                            command,
-                            isOwner,
-                            isAdmin: isAdmins,
-                            isBotAdmin: isBotAdmins,
-                            isROwner: isOwner,
-                            from,
-                            reply
-                        });
-                    }
-                } catch (e) {
-                    console.error(`Plugin Error (handler):`, e.message);
-                }
-            }
-
-            let isExactCommandMatch = false;
-
-            // ── Run cmd-style plugins ─────────────────────────────────────────
-            for (const cmd of commands) {
-                if (isBlockedChat && !isOwner) {
-                    // Bypass block ONLY for the mention auto-responder
-                    if (cmd.desc !== 'Auto-responds when bot or SUDO is mentioned') {
-                        continue;
+                        console.error(`Plugin Error (handler):`, e.message);
                     }
                 }
 
-                try {
-                    let match = false;
-                    if (isCmd && (cmd.pattern === command || (cmd.alias && cmd.alias.includes(command)))) {
-                        match = true;
-                        isExactCommandMatch = true;
-                    } else if (cmd.on === 'text') {
-                        match = true;
+                // ── Run cmd-style plugins ─────────────────────────────────────────
+                for (const cmd of commands) {
+                    if (isBlockedChat && !isOwner) {
+                        // Bypass block ONLY for the mention auto-responder
+                        if (cmd.desc !== 'Auto-responds when bot or SUDO is mentioned') {
+                            continue;
+                        }
                     }
 
-                    if (match) {
-                        const sender = m.sender;
-                        const senderNumber = m.senderNumber;
-                        const pushname = m.pushName;
-                        const isMe = isOwner || botJid === normalizeJid(sender);
-                        const isGroup = m.isGroup;
-                        const botLid = conn.user.lid ? conn.user.lid.split(':')[0] : '';
+                    try {
+                        let match = false;
+                        if (isCmd && (cmd.pattern === command || (cmd.alias && cmd.alias.includes(command)))) {
+                            match = true;
+                            isExactCommandMatch = true;
+                        } else if (cmd.on === 'text') {
+                            match = true;
+                        }
 
-                        await cmd.function(conn, m, m, {
-                            from,
-                            quoted: m.quoted,
-                            body,
-                            isCmd: true,
-                            command,
-                            args,
-                            q,
-                            isGroup,
-                            sender,
-                            senderNumber,
-                            botNumber2: botNumber,
-                            botNumber,
-                            botLid,
-                            pushname,
-                            isMe,
-                            isOwner,
-                            groupMetadata,
-                            groupName,
-                            participants,
-                            groupAdmins,
-                            isBotAdmins,
-                            isAdmins,
-                            reply
-                        });
+                        if (match) {
+                            console.log(`⚡ Executing cmd plugin: ${cmd.pattern}`);
+                            const sender = m.sender;
+                            const senderNumber = m.senderNumber;
+                            const pushname = m.pushName;
+                            const isMe = isOwner || botJid === normalizeJid(sender);
+                            const isGroup = m.isGroup;
+                            const botLid = conn.user.lid ? conn.user.lid.split(':')[0] : '';
 
-                        // Custom Audio logic
-                        if (isCmd && global.cmdAudio && !m.audioPlayed) {
-                            let matchedCmd = null;
-                            if (global.cmdAudio[command]) matchedCmd = command;
-                            else if (cmd.alias) {
-                                for (let alias of cmd.alias) {
-                                    if (global.cmdAudio[alias]) {
-                                        matchedCmd = alias;
-                                        break;
+                            await cmd.function(conn, m, m, {
+                                from,
+                                quoted: m.quoted,
+                                body,
+                                isCmd: true,
+                                command,
+                                args,
+                                q,
+                                isGroup,
+                                sender,
+                                senderNumber,
+                                botNumber2: botNumber,
+                                botNumber,
+                                botLid,
+                                pushname,
+                                isMe,
+                                isOwner,
+                                groupMetadata,
+                                groupName,
+                                participants,
+                                groupAdmins,
+                                isBotAdmins,
+                                isAdmins,
+                                reply
+                            });
+
+                            // Custom Audio logic
+                            if (isCmd && global.cmdAudio && !m.audioPlayed) {
+                                let matchedCmd = null;
+                                if (global.cmdAudio[command]) matchedCmd = command;
+                                else if (cmd.alias) {
+                                    for (let alias of cmd.alias) {
+                                        if (global.cmdAudio[alias]) {
+                                            matchedCmd = alias;
+                                            break;
+                                        }
                                     }
                                 }
-                            }
-                            if (!matchedCmd && typeof cmd.pattern === 'string' && global.cmdAudio[cmd.pattern]) {
-                                matchedCmd = cmd.pattern;
-                            }
+                                if (!matchedCmd && typeof cmd.pattern === 'string' && global.cmdAudio[cmd.pattern]) {
+                                    matchedCmd = cmd.pattern;
+                                }
 
-                            if (matchedCmd) {
-                                const audioFile = global.cmdAudio[matchedCmd];
-                                const fs = require('fs');
-                                if (fs.existsSync(audioFile)) {
-                                    try {
-                                        m.audioPlayed = true; // Prevent playing multiple times for the same message
-                                        await conn.sendMessage(from, { 
-                                            audio: fs.readFileSync(audioFile), 
-                                            mimetype: 'audio/ogg; codecs=opus', 
-                                            ptt: true 
-                                        }, { quoted: m });
-                                    } catch(e) {
-                                        console.error('Failed to send custom cmd audio:', e);
+                                if (matchedCmd) {
+                                    const audioFile = global.cmdAudio[matchedCmd];
+                                    const fs = require('fs');
+                                    if (fs.existsSync(audioFile)) {
+                                        try {
+                                            m.audioPlayed = true; // Prevent playing multiple times for the same message
+                                            await conn.sendMessage(from, { 
+                                                audio: fs.readFileSync(audioFile), 
+                                                mimetype: 'audio/ogg; codecs=opus', 
+                                                ptt: true 
+                                            }, { quoted: m });
+                                        } catch(e) {
+                                            console.error('Failed to send custom cmd audio:', e);
+                                        }
                                     }
                                 }
                             }
                         }
+                    } catch (e) {
+                        console.error(`CMD Plugin Error [${cmd.pattern}]:`, e.message);
                     }
-                } catch (e) {
-                    console.error(`CMD Plugin Error [${cmd.pattern}]:`, e.message);
                 }
-            }
 
-            // Spelling Check Logic (Command Not Found)
-            if (isCmd && command && !isExactCommandMatch && global.cmdAudio && global.cmdAudio['spelling']) {
-                const fs = require('fs');
-                const audioFile = global.cmdAudio['spelling'];
-                if (fs.existsSync(audioFile)) {
-                    try {
-                        await conn.sendMessage(from, { 
-                            audio: fs.readFileSync(audioFile), 
-                            mimetype: 'audio/ogg; codecs=opus', 
-                            ptt: true 
-                        }, { quoted: m });
-                    } catch(e) {
-                        console.error('Failed to send spelling audio:', e);
+                // Spelling Check Logic (Command Not Found)
+                if (isCmd && command && !isExactCommandMatch && global.cmdAudio && global.cmdAudio['spelling']) {
+                    const fs = require('fs');
+                    const audioFile = global.cmdAudio['spelling'];
+                    if (fs.existsSync(audioFile)) {
+                        try {
+                            await conn.sendMessage(from, { 
+                                audio: fs.readFileSync(audioFile), 
+                                mimetype: 'audio/ogg; codecs=opus', 
+                                ptt: true 
+                            }, { quoted: m });
+                        } catch(e) {
+                            console.error('Failed to send spelling audio:', e);
+                        }
                     }
                 }
             }

@@ -1,9 +1,10 @@
 node_modules/
 session/
-database/
+database/*
 !database/cmdaudio/
 !database/cmdaudio/*.ogg
 !database/cmdaudio.json
+!database/bot_config.json
 .env
 npm-debug.log
 ffmpeg.exe
