@@ -1,7 +1,8 @@
 services:
-  - type: worker
+  - type: web
     name: xymbot
     env: node
+    plan: free
     buildCommand: npm install
     startCommand: node index.js
     envVars:
@@ -9,6 +10,8 @@ services:
         value: 20.14.0
       - key: SESSION_ID
         sync: false
+      - key: LICENSE_KEY
+        value: XYM-BOT-PAIR
       - key: GEMINI_API_KEY
         sync: false
       - key: OPENAI_API_KEY

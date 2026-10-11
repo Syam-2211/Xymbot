@@ -14,20 +14,29 @@ const fs = require("fs");
 const path = require("path");
 require('./config');
 
+// ─── CLOUD HEALTH SERVER (Required for Render free Web Service) ──────────────
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 8000;
+app.get('/', (req, res) => res.send(`🤖 ${global.botName || 'Xymbot'} is running 24/7 online!`));
+app.get('/health', (req, res) => res.json({ status: 'ok', bot: global.botName, uptime: process.uptime() }));
+app.listen(PORT, () => console.log(`🌐 Cloud health server listening on port ${PORT}`));
+
 // ─── DECODE SESSION_ID IF PRESENT ───────────────────────────────────────────
 const sessionDir = path.join(__dirname, 'session');
-if (process.env.SESSION_ID) {
+const sessionId = process.env.SESSION_ID || global.SESSION_ID;
+if (sessionId) {
     try {
-        if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir);
-        const data = process.env.SESSION_ID.replace('XYMBOT~', '').trim();
+        if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
+        const data = sessionId.replace('XYMBOT~', '').trim();
         const jsonStr = Buffer.from(data, 'base64').toString('utf8');
         try {
             const sessionObj = JSON.parse(jsonStr);
-            if (sessionObj.clientID || sessionObj.me) {
+            if (sessionObj.clientID || sessionObj.me || sessionObj.noiseKey) {
                 fs.writeFileSync(path.join(sessionDir, 'creds.json'), jsonStr);
             } else {
                 for (const [filename, content] of Object.entries(sessionObj)) {
-                    fs.writeFileSync(path.join(sessionDir, filename), content);
+                    fs.writeFileSync(path.join(sessionDir, filename), typeof content === 'string' ? content : JSON.stringify(content));
                 }
             }
             console.log('✅ Session successfully generated from SESSION_ID variable!');
@@ -79,6 +88,50 @@ function loadPlugins() {
 }
 
 async function startBot() {
+    // ─── LICENSE KEY VERIFICATION ──────────────────────────────────────────────
+    const licenseKey = global.LICENSE_KEY || process.env.LICENSE_KEY;
+    if (!licenseKey) {
+        console.error("❌ No License Key provided! Please set LICENSE_KEY in config.js or environment variables.");
+        process.exit(1);
+    }
+
+    // Verify license with retry loop (allows Render free instances up to 45s to wake from sleep)
+    let licenseVerified = false;
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`🔍 Verifying License Key (Attempt ${attempt}/${maxRetries})...`);
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+            
+            const response = await fetch(`https://xymbot-pairing.onrender.com/api/verify-license?key=${encodeURIComponent(licenseKey)}`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+            
+            const data = await response.json();
+            if (data.valid) {
+                console.log("✅ License Key Verified!");
+                licenseVerified = true;
+                break;
+            } else {
+                console.error(`❌ Invalid License Key: ${data.error}`);
+                process.exit(1);
+            }
+        } catch (error) {
+            console.warn(`⚠️ License server contact attempt ${attempt} failed: ${error.message}`);
+            if (attempt < maxRetries) {
+                console.log("⏳ Render server may be waking up from sleep. Retrying in 5 seconds...");
+                await new Promise(r => setTimeout(r, 5000));
+            }
+        }
+    }
+
+    if (!licenseVerified) {
+        console.error("❌ Failed to reach License Server after 3 attempts. Please check internet or verify https://xymbot-pairing.onrender.com is live.");
+        process.exit(1);
+    }
+
     const { version, isLatest } = await fetchLatestBaileysVersion();
     const { state, saveCreds } = await useMultiFileAuthState('session');
 
