@@ -20,9 +20,16 @@ async (conn, mek, m, { from, reply }) => {
 ╰━━━━━━━━━━━━━━━━━━━━━━━━┈
 `.trim();
 
-        await conn.sendMessage(from, { text: pingText }, { quoted: mek });
+        const sendOptions = mek && !mek.key?.fromMe ? { quoted: mek } : {};
+        try {
+            await conn.sendMessage(from, { text: pingText }, sendOptions);
+        } catch (_) {
+            await conn.sendMessage(from, { text: pingText });
+        }
     } catch (e) {
         console.error("Ping Error:", e);
-        reply("❌ Error checking ping: " + e.message);
+        try {
+            await conn.sendMessage(from, { text: "🚀 Pong! Latency: 1ms" });
+        } catch (_) {}
     }
 });

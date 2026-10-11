@@ -15,21 +15,22 @@ const sendMenuAudio = async (conn, from, mek) => {
 
 const sendMenuText = async (conn, from, mek, menuText) => {
     const menuImagePath = path.join(__dirname, '../media/menu.jpg');
+    const sendOpts = mek && !mek.key?.fromMe ? { quoted: mek } : {};
     try {
         if (fs.existsSync(menuImagePath)) {
             const menuImage = fs.readFileSync(menuImagePath);
             await conn.sendMessage(from, {
                 image: menuImage,
                 caption: menuText
-            }, { quoted: mek });
+            }, sendOpts);
         } else {
-            await conn.sendMessage(from, { text: menuText }, { quoted: mek });
+            await conn.sendMessage(from, { text: menuText }, sendOpts);
         }
         await sendMenuAudio(conn, from, mek);
     } catch (e) {
         console.error("Menu image send failed, falling back to text:", e.message);
         try {
-            await conn.sendMessage(from, { text: menuText }, { quoted: mek });
+            await conn.sendMessage(from, { text: menuText }, sendOpts);
             await sendMenuAudio(conn, from, mek);
         } catch (err) {
             console.error("Failed to send menu text:", err);

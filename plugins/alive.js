@@ -14,6 +14,7 @@ let handler = async (m, { conn, usedPrefix }) => {
 
   _✨ Type ${usedPrefix}menu to see my features! ✨_`.trim();
 
+    const sendOptions = m && !m.key?.fromMe ? { quoted: m } : {};
     try {
         await conn.sendMessage(m.chat, {
             text: message,
@@ -27,9 +28,9 @@ let handler = async (m, { conn, usedPrefix }) => {
                     renderLargerThumbnail: true
                 }
             }
-        }, { quoted: m });
+        }, sendOptions);
     } catch (_) {
-        await conn.sendMessage(m.chat, { text: message }, { quoted: m });
+        await conn.sendMessage(m.chat, { text: message }, sendOptions);
     }
 };
 

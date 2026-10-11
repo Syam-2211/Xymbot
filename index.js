@@ -322,15 +322,6 @@ async function startBot() {
                 if (!m || !m.message) continue;
                 if (m.key.remoteJid === 'status@broadcast') continue;
 
-                // Safely convert message timestamp (handles protobuf Long object, number, or string)
-                const rawTimestamp = m.messageTimestamp;
-                const msgTimestamp = typeof rawTimestamp === 'object' && rawTimestamp !== null
-                    ? (rawTimestamp.low || (typeof rawTimestamp.toNumber === 'function' ? rawTimestamp.toNumber() : 0))
-                    : Number(rawTimestamp) || 0;
-
-                // Ignore startup backlog messages that were sent BEFORE this bot process booted up
-                if (msgTimestamp && msgTimestamp < (botStartTime - 5)) continue;
-
                 // Unwrap any nested message wrappers (ephemeral, view-once, document-with-caption, edited)
                 let message = m.message;
                 while (
@@ -358,8 +349,11 @@ async function startBot() {
                 m.senderNumber = m.sender ? m.sender.split('@')[0].split(':')[0] : '';
                 m.pushName = m.pushName || 'User';
 
-                // Set m.reply so handler-style plugins can use it
-                m.reply = (text) => conn.sendMessage(m.chat, { text: String(text) }, { quoted: m });
+                // Set m.reply so handler-style plugins can use it safely
+                m.reply = (text) => {
+                    const opts = !m.key.fromMe ? { quoted: m } : {};
+                    return conn.sendMessage(m.chat, { text: String(text) }, opts);
+                };
 
                 m.type = Object.keys(message).find(k =>
                     !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)
@@ -406,13 +400,33 @@ async function startBot() {
                 ).trim();
 
                 const prefix = (require('./config').getPrefix() || '.').trim();
-                const isCmd = prefix ? body.startsWith(prefix) : true;
-                const command = isCmd
-                    ? (prefix ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : body.split(/ +/).shift().toLowerCase())
-                    : '';
-                const args = isCmd
-                    ? (prefix ? body.slice(prefix.length).trim().split(/ +/).slice(1) : body.split(/ +/).slice(1))
-                    : body.split(/ +/);
+                let isCmd = false;
+                let command = '';
+                let args = [];
+
+                if (prefix && body.startsWith(prefix)) {
+                    isCmd = true;
+                    command = body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase();
+                    args = body.slice(prefix.length).trim().split(/ +/).slice(1);
+                } else if (!prefix || prefix === 'none' || prefix === 'null') {
+                    isCmd = true;
+                    command = body.split(/ +/).shift().toLowerCase();
+                    args = body.split(/ +/).slice(1);
+                } else {
+                    // Fallback: also accept command without prefix (e.g. typing "ping" instead of ".ping")
+                    const firstWord = body.split(/ +/).shift().toLowerCase();
+                    const isDirectMatch = commands.some(c => c.pattern === firstWord || (c.alias && c.alias.includes(firstWord)))
+                        || handlerPlugins.some(p => {
+                            if (p.command instanceof RegExp) return p.command.test(firstWord);
+                            if (Array.isArray(p.command)) return p.command.includes(firstWord);
+                            return p.command === firstWord;
+                        });
+                    if (isDirectMatch) {
+                        isCmd = true;
+                        command = firstWord;
+                        args = body.split(/ +/).slice(1);
+                    }
+                }
                 const q = args.join(' ');
 
                 // ── Determine ownership (paired account, fromMe, or global.owner) ──
@@ -426,16 +440,14 @@ async function startBot() {
                 const isOwner = isFromMe || isPairedUser || isConfigOwner;
                 const isSudo = Array.isArray(global.sudo) && global.sudo.includes(m.senderNumber);
 
-                if (isCmd && command) {
-                    console.log(`⚡ [COMMAND] '.${command}' from ${m.senderNumber} (${isOwner ? 'Owner' : 'User'}) in ${m.isGroup ? 'Group ' + m.chat : 'Private Chat'}`);
-                }
+                console.log(`📩 [INCOMING] From: ${m.senderNumber || m.chat} | Text: "${body}" | isCmd: ${isCmd} | command: "${command}" | isOwner: ${isOwner}`);
 
                 if (global.WORKTYPE === 'private' && !isOwner) {
-                    if (isCmd && command) console.log(`🔒 Command '.${command}' ignored: Bot is in PRIVATE mode.`);
+                    if (isCmd && command) console.log(`🔒 Command '${command}' ignored: Bot is in PRIVATE mode.`);
                     continue;
                 }
                 if (global.WORKTYPE === 'sudo' && !isOwner && !isSudo) {
-                    if (isCmd && command) console.log(`👑 Command '.${command}' ignored: Bot is in SUDO mode.`);
+                    if (isCmd && command) console.log(`👑 Command '${command}' ignored: Bot is in SUDO mode.`);
                     continue;
                 }
 
