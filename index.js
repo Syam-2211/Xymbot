@@ -38,8 +38,10 @@ require('./config');
 
 // Message retry counter cache — required for Baileys to decrypt incoming messages
 const msgRetryCounterCache = new NodeCache();
-// Map to track last command timestamp per user for anti‑spam cooldown (3 s)
+// Map to track last command timestamp per user for anti-spam cooldown (3 s)
 const userCooldowns = new Map();
+// Manual message cache so Baileys can re-decrypt messages without makeInMemoryStore
+const messageCache = new Map();
 
 // ─── CLOUD HEALTH SERVER (Required for Render free Web Service) ──────────────
 const express = require('express');
@@ -196,9 +198,10 @@ async function startBot() {
         generateHighQualityLinkPreview: true,
         msgRetryCounterCache,
         getMessage: async (key) => {
-            return {
-                conversation: 'hello'
-            };
+            // Try cache first, then fall back so decryption always succeeds
+            const cached = messageCache.get(key.id);
+            if (cached) return cached;
+            return { conversation: '' };
         }
     });
     // Bind store to the socket for proper message decryption and caching
@@ -351,6 +354,17 @@ async function startBot() {
 
     conn.ev.on('messages.upsert', async (chatUpdate) => {
         try {
+            // Populate message cache so getMessage works for retries
+            for (const msg of chatUpdate.messages || []) {
+                if (msg?.key?.id && msg.message) {
+                    messageCache.set(msg.key.id, msg.message);
+                    // Keep cache from growing unbounded (keep last 500)
+                    if (messageCache.size > 500) {
+                        const firstKey = messageCache.keys().next().value;
+                        messageCache.delete(firstKey);
+                    }
+                }
+            }
             console.log(`📡 [MESSAGES.UPSERT] Fired! Count: ${chatUpdate.messages?.length || 0}, Type: ${chatUpdate.type}`);
             if (!chatUpdate.messages || !chatUpdate.messages.length) return;
 
