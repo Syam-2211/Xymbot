@@ -231,10 +231,7 @@ async function startBot() {
         generateHighQualityLinkPreview: true,
         msgRetryCounterCache,
         getMessage: async (key) => {
-            // Try cache first, then fall back so decryption always succeeds
-            const cached = messageCache.get(key.id);
-            if (cached) return cached;
-            return { conversation: '' };
+            return messageCache.get(key.id) || store?.loadMessage(key.remoteJid, key.id)?.message || undefined;
         }
     });
     // Bind store to the socket for proper message decryption and caching
@@ -546,12 +543,6 @@ async function startBot() {
                 }
 
                 const reply = async (text) => {
-                    // Simulate human typing presence before sending a reply
-                    try {
-                        await conn.sendPresenceUpdate('composing', from);
-                        // Random delay between 500‑1500 ms
-                        await new Promise(r => setTimeout(r, 500 + Math.random() * 1000));
-                    } catch (_) { /* ignore presence errors */ }
                     const textStr = String(text);
                     const res = await conn.sendMessage(from, { text: textStr }, { quoted: m });
                     if (textStr.toLowerCase().includes('error')) {
