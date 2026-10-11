@@ -183,6 +183,19 @@ async function startBot() {
         process.exit(1);
     }
 
+    // ── Ensure Valid SESSION_ID Exists ──────────────────────────────────────────
+    const hasCreds = fs.existsSync(path.join(sessionDir, 'creds.json'));
+    if (!hasCreds) {
+        console.error('\n======================================================');
+        console.error('❌ NO VALID SESSION FOUND!');
+        console.error('👉 Please link your number on the Pairing Site:');
+        console.error('   https://xymbot-pairing.onrender.com');
+        console.error('👉 Then copy the XYMBOT~... session and set SESSION_ID');
+        console.error('   in your Render Environment Variables.');
+        console.error('======================================================\n');
+        process.exit(1);
+    }
+
     await initBaileys();
         // Initialise in-memory store for better message decryption (gracefully skip if unavailable)
         let store = null;
@@ -229,30 +242,7 @@ async function startBot() {
         conn.store = store;
     }
 
-    // ── RAW EVENT INTERCEPTOR (diagnostic — shows all events firing) ────────────
-    const _origEmit = conn.ev.emit.bind(conn.ev);
-    conn.ev.emit = function (event, ...args) {
-        if (!['messages.media-update', 'presence.update'].includes(event)) {
-            console.log(`🔔 [EV] ${event}`);
-        }
-        return _origEmit(event, ...args);
-    };
-
     conn.ev.on('creds.update', saveCreds);
-
-    if (!conn.authState.creds.registered && process.env.PAIRING_NUMBER) {
-        setTimeout(async () => {
-            try {
-                let code = await conn.requestPairingCode(process.env.PAIRING_NUMBER.replace(/[^0-9]/g, ''));
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                console.log(`\n=========================================`);
-                console.log(`🔑 YOUR PAIRING CODE IS: ${code}`);
-                console.log(`=========================================\n`);
-            } catch(e) {
-                console.log("Failed to request pairing code:", e);
-            }
-        }, 3000);
-    }
     // ─── AUDIO ID3 TAG INTERCEPTOR ──────────────────────────────────────────────
     const originalSendMessage = conn.sendMessage.bind(conn);
     conn.sendMessage = async (jid, content, options) => {
@@ -312,8 +302,7 @@ async function startBot() {
     conn.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
-            console.log('\n📸 SCAN THE QR CODE BELOW TO CONNECT:\n');
-            qrcode.generate(qr, { small: true });
+            console.warn('⚠️ Session expired or invalid. Please generate a new SESSION_ID on the Pairing Site.');
         }
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
