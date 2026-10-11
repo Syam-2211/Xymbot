@@ -210,6 +210,15 @@ async function startBot() {
         conn.store = store;
     }
 
+    // ── RAW EVENT INTERCEPTOR (diagnostic — shows all events firing) ────────────
+    const _origEmit = conn.ev.emit.bind(conn.ev);
+    conn.ev.emit = function (event, ...args) {
+        if (!['messages.media-update', 'presence.update'].includes(event)) {
+            console.log(`🔔 [EV] ${event}`);
+        }
+        return _origEmit(event, ...args);
+    };
+
     conn.ev.on('creds.update', saveCreds);
 
     if (!conn.authState.creds.registered && process.env.PAIRING_NUMBER) {
