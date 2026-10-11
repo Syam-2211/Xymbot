@@ -1,7 +1,6 @@
 const { cmd } = require('../command');
 const fs = require('fs');
 const path = require('path');
-const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
 const dbPath = path.join(__dirname, '../database/cmdaudio.json');
 const audioDir = path.join(__dirname, '../database/cmdaudio');

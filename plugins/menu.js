@@ -1,6 +1,5 @@
 const { cmd, commands } = require('../command');
 const { runtime } = require('../lib/functions');
-const { generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');

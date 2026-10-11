@@ -12,7 +12,7 @@
     "@jerrycoder/instagram-api": "^2.5.9",
     "@sasmeee/igdl": "^0.0.1-security",
     "@vitalets/google-translate-api": "^9.2.1",
-    "@whiskeysockets/baileys": "latest",
+    "@whiskeysockets/baileys": "^6.6.0",
     "api-dylux": "^1.8.6",
     "axios": "^1.19.0",
     "btch-downloader": "^6.3.6",

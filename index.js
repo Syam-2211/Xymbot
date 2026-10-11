@@ -1,13 +1,32 @@
-const {
-    default: makeWASocket,
+let makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
     makeCacheableSignalKeyStore,
     fetchLatestBaileysVersion,
     Browsers,
     downloadMediaMessage,
-    getAggregateVotesInPollMessage
-} = require("@whiskeysockets/baileys");
+    getAggregateVotesInPollMessage;
+
+async function initBaileys() {
+    let baileys;
+    try {
+        baileys = require("@whiskeysockets/baileys");
+    } catch (e) {
+        if (e.code === 'ERR_REQUIRE_ESM') {
+            baileys = await import("@whiskeysockets/baileys");
+        } else {
+            throw e;
+        }
+    }
+    makeWASocket = baileys.default || baileys.makeWASocket;
+    useMultiFileAuthState = baileys.useMultiFileAuthState;
+    DisconnectReason = baileys.DisconnectReason;
+    makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
+    fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+    Browsers = baileys.Browsers;
+    downloadMediaMessage = baileys.downloadMediaMessage;
+    getAggregateVotesInPollMessage = baileys.getAggregateVotesInPollMessage;
+}
 const pino = require("pino");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
@@ -133,6 +152,8 @@ async function startBot() {
         console.error(`❌ Failed to reach License Server after 3 attempts. Please check internet or verify ${licenseServer} is live.`);
         process.exit(1);
     }
+
+    await initBaileys();
 
     const { version, isLatest } = await fetchLatestBaileysVersion();
     const { state, saveCreds } = await useMultiFileAuthState('session');
