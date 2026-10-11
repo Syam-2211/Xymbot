@@ -1,3 +1,13 @@
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    makeCacheableSignalKeyStore,
+    fetchLatestBaileysVersion,
+    Browsers,
+    downloadMediaMessage,
+    getAggregateVotesInPollMessage
+} = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
@@ -51,38 +61,8 @@ if (fs.existsSync(blockedChatsFile)) {
     }
 }
 
-// Ensure tmp & session directory exists
+// Ensure tmp directory exists
 if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp');
-if (!fs.existsSync('./session')) fs.mkdirSync('./session');
-
-// ─── 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊 SESSION DECODER (CLOUD SHORT ID) ───────────────────────────
-(async () => {
-    // If there is a SESSION_ID and it contains the "~" symbol (e.g. SNEHA~XYZ123)
-    if (process.env.SESSION_ID && process.env.SESSION_ID.includes("~")) {
-        try {
-            console.log("🔄 Fetching and Decoding Session ID from Cloud...");
-            
-            // Extract ONLY the short ID (everything after the ~ symbol)
-            const shortId = process.env.SESSION_ID.split("~")[1];
-            
-            // Download the Base64 text back from Dpaste
-            const response = await fetch(`https://dpaste.com/${shortId}.txt`);
-            const base64Data = await response.text();
-            
-            // Decode Base64 back to JSON files
-            const sessionJson = JSON.parse(Buffer.from(base64Data.trim(), 'base64').toString('utf-8'));
-            
-            for (const [filename, fileContent] of Object.entries(sessionJson)) {
-                const filePath = path.join('./session', filename);
-                const contentToWrite = typeof fileContent === 'string' ? fileContent : JSON.stringify(fileContent, null, 2);
-                fs.writeFileSync(filePath, contentToWrite);
-            }
-            console.log("✅ Session files extracted successfully!");
-        } catch (e) {
-            console.error("❌ Failed to decode SESSION_ID. The ID might be invalid or expired.", e);
-        }
-    }
-})();
 
 // ─── LOAD ALL PLUGINS ONCE AT STARTUP ─────────────────────────────────────────
 const { commands } = require('./command');
@@ -306,6 +286,8 @@ async function startBot() {
         }
     });
 
+
+
     conn.ev.on('messages.upsert', async (chatUpdate) => {
         try {
             const m = chatUpdate.messages[0];
@@ -332,6 +314,8 @@ async function startBot() {
             m.type = Object.keys(m.message).find(k =>
                 !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)
             ) || 'conversation';
+
+
 
             // Detect quoted/replied-to message
             const ctxInfo = m.message?.extendedTextMessage?.contextInfo
@@ -502,4 +486,77 @@ async function startBot() {
                             botNumber,
                             botLid,
                             pushname,
-  
+                            isMe,
+                            isOwner,
+                            groupMetadata,
+                            groupName,
+                            participants,
+                            groupAdmins,
+                            isBotAdmins,
+                            isAdmins,
+                            reply
+                        });
+
+                        // Custom Audio logic
+                        if (isCmd && global.cmdAudio && !m.audioPlayed) {
+                            let matchedCmd = null;
+                            if (global.cmdAudio[command]) matchedCmd = command;
+                            else if (cmd.alias) {
+                                for (let alias of cmd.alias) {
+                                    if (global.cmdAudio[alias]) {
+                                        matchedCmd = alias;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!matchedCmd && typeof cmd.pattern === 'string' && global.cmdAudio[cmd.pattern]) {
+                                matchedCmd = cmd.pattern;
+                            }
+
+                            if (matchedCmd) {
+                                const audioFile = global.cmdAudio[matchedCmd];
+                                const fs = require('fs');
+                                if (fs.existsSync(audioFile)) {
+                                    try {
+                                        m.audioPlayed = true; // Prevent playing multiple times for the same message
+                                        await conn.sendMessage(from, { 
+                                            audio: fs.readFileSync(audioFile), 
+                                            mimetype: 'audio/ogg; codecs=opus', 
+                                            ptt: true 
+                                        }, { quoted: m });
+                                    } catch(e) {
+                                        console.error('Failed to send custom cmd audio:', e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(`CMD Plugin Error [${cmd.pattern}]:`, e.message);
+                }
+            }
+
+            // Spelling Check Logic (Command Not Found)
+            if (isCmd && command && !isExactCommandMatch && global.cmdAudio && global.cmdAudio['spelling']) {
+                const fs = require('fs');
+                const audioFile = global.cmdAudio['spelling'];
+                if (fs.existsSync(audioFile)) {
+                    try {
+                        await conn.sendMessage(from, { 
+                            audio: fs.readFileSync(audioFile), 
+                            mimetype: 'audio/ogg; codecs=opus', 
+                            ptt: true 
+                        }, { quoted: m });
+                    } catch(e) {
+                        console.error('Failed to send spelling audio:', e);
+                    }
+                }
+            }
+
+        } catch (err) {
+            console.error("Handler Error:", err.message);
+        }
+    });
+}
+
+startBot();
