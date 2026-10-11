@@ -5,7 +5,8 @@ let makeWASocket,
     fetchLatestBaileysVersion,
     Browsers,
     downloadMediaMessage,
-    getAggregateVotesInPollMessage;
+    getAggregateVotesInPollMessage,
+    makeInMemoryStore;
 
 async function initBaileys() {
     let baileys;
@@ -26,6 +27,7 @@ async function initBaileys() {
     Browsers = baileys.Browsers;
     downloadMediaMessage = baileys.downloadMediaMessage;
     getAggregateVotesInPollMessage = baileys.getAggregateVotesInPollMessage;
+    makeInMemoryStore = baileys.makeInMemoryStore;
 }
 const pino = require("pino");
 const qrcode = require("qrcode-terminal");
@@ -161,9 +163,20 @@ async function startBot() {
     }
 
     await initBaileys();
-        // Initialise in‑memory store (persisted to ./session/baileys_store.json)
-        const store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
-        store.readFromFile('./session/baileys_store.json');
+        // Initialise in-memory store for better message decryption (gracefully skip if unavailable)
+        let store = null;
+        if (typeof makeInMemoryStore === 'function') {
+            try {
+                store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
+                store.readFromFile('./session/baileys_store.json');
+                console.log('✅ Baileys in-memory store initialised.');
+            } catch (e) {
+                console.warn('⚠️ Could not initialise in-memory store:', e.message);
+                store = null;
+            }
+        } else {
+            console.warn('⚠️ makeInMemoryStore not available in this Baileys version — skipping store.');
+        }
 
         const { version, isLatest } = await fetchLatestBaileysVersion();
         const { state, saveCreds } = await useMultiFileAuthState('session');
@@ -189,8 +202,10 @@ async function startBot() {
         }
     });
     // Bind store to the socket for proper message decryption and caching
-    store.bind(conn.ev);
-    conn.store = store;
+    if (store) {
+        store.bind(conn.ev);
+        conn.store = store;
+    }
 
     conn.ev.on('creds.update', saveCreds);
 
