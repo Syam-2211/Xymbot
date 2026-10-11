@@ -169,6 +169,12 @@ async function startBot() {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
         },
         browser: ["Xymbot", "safari", "18.2.0"],
+        syncFullHistory: false,
+        getMessage: async (key) => {
+            return {
+                conversation: 'hello'
+            };
+        }
     });
 
     conn.ev.on('creds.update', saveCreds);
@@ -260,8 +266,9 @@ async function startBot() {
             console.log('✅ Connected! Bot is online.');
 
             // Automatically set logged in / paired user as owner
-            const pairedUserJid = conn.user.id;
+            const pairedUserJid = conn.user?.id || '';
             const pairedNumber = pairedUserJid ? pairedUserJid.split(':')[0].split('@')[0] : '';
+            console.log(`📱 Connected WhatsApp Account: +${pairedNumber} (JID: ${pairedUserJid})`);
             if (!Array.isArray(global.owner)) global.owner = [];
             if (pairedNumber && !global.owner.includes(pairedNumber)) {
                 global.owner.push(pairedNumber);
@@ -312,10 +319,9 @@ async function startBot() {
 
 
 
-    const botStartTime = Math.floor(Date.now() / 1000);
-
     conn.ev.on('messages.upsert', async (chatUpdate) => {
         try {
+            console.log(`📡 [MESSAGES.UPSERT] Fired! Count: ${chatUpdate.messages?.length || 0}, Type: ${chatUpdate.type}`);
             if (!chatUpdate.messages || !chatUpdate.messages.length) return;
 
             for (const m of chatUpdate.messages) {
