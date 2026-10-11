@@ -112,6 +112,25 @@ if (fs.existsSync(blockedChatsFile)) {
 // Ensure tmp directory exists
 if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp');
 
+// Load custom command audios globally
+global.cmdAudio = {};
+const cmdAudioFile = path.join(__dirname, 'database/cmdaudio.json');
+if (fs.existsSync(cmdAudioFile)) {
+    try {
+        const rawAudios = JSON.parse(fs.readFileSync(cmdAudioFile, 'utf8'));
+        for (const [cmdKey, relOrAbs] of Object.entries(rawAudios)) {
+            const filename = path.basename(relOrAbs);
+            const resolvedPath = path.join(__dirname, 'database/cmdaudio', filename);
+            if (fs.existsSync(resolvedPath)) {
+                global.cmdAudio[cmdKey] = resolvedPath;
+            }
+        }
+        console.log(`🎵 Loaded ${Object.keys(global.cmdAudio).length} custom command audio effects.`);
+    } catch (e) {
+        console.error('Failed to parse cmdaudio.json:', e);
+    }
+}
+
 // ─── LOAD ALL PLUGINS ONCE AT STARTUP ─────────────────────────────────────────
 const { commands } = require('./command');
 const handlerPlugins = []; // handler-style plugins (module.exports = async fn)
@@ -626,6 +645,25 @@ async function startBot() {
                                 from,
                                 reply
                             });
+
+                            // Custom Audio for handler plugins (like alive)
+                            if (isCmd && global.cmdAudio && !m.audioPlayed) {
+                                if (global.cmdAudio[command]) {
+                                    const audioFile = global.cmdAudio[command];
+                                    if (fs.existsSync(audioFile)) {
+                                        try {
+                                            m.audioPlayed = true;
+                                            await conn.sendMessage(from, { 
+                                                audio: fs.readFileSync(audioFile), 
+                                                mimetype: 'audio/ogg; codecs=opus', 
+                                                ptt: true 
+                                            }, { quoted: m });
+                                        } catch (err) {
+                                            console.error('Failed to send handler custom audio:', err);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } catch (e) {
                         console.error(`Plugin Error (handler):`, e.message);
