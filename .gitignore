@@ -1,11 +1,11 @@
 node_modules/
 session/
 database/
+!database/cmdaudio/
+!database/cmdaudio/*.ogg
+!database/cmdaudio.json
 .env
 npm-debug.log
-ffmpeg.exe
-ffplay.exe
-ffprobe.exe
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe

@@ -32,8 +32,8 @@ let handler = async (m, { conn, participants, action }) => {
     // If chat doesn't exist in DB, default to having welcome/goodbye enabled
     if (!global.db.data.chats[m.chat]) {
         global.db.data.chats[m.chat] = {
-            welcome: true,
-            goodbye: true,
+            welcome: false,
+            goodbye: false,
             antidelete: false,
             antilink: false,
             autoadmin: false,

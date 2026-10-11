@@ -5,11 +5,21 @@ const path = require('path');
 const dbPath = path.join(__dirname, '../database/cmdaudio.json');
 const audioDir = path.join(__dirname, '../database/cmdaudio');
 
-// Load DB
+// Load DB — migrate absolute paths to relative on load
+if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
 if (!fs.existsSync(dbPath)) fs.writeFileSync(dbPath, JSON.stringify({}));
 if (!global.cmdAudio) {
     try {
-        global.cmdAudio = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+        const raw = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+        // Normalize: replace any absolute paths with relative paths
+        const normalized = {};
+        for (const [k, v] of Object.entries(raw)) {
+            const filename = path.basename(v);
+            const relPath = path.join(audioDir, filename);
+            normalized[k] = relPath;
+        }
+        global.cmdAudio = normalized;
+        fs.writeFileSync(dbPath, JSON.stringify(normalized, null, 2));
     } catch (e) {
         global.cmdAudio = {};
     }
