@@ -36,6 +36,8 @@ require('./config');
 
 // Message retry counter cache — required for Baileys to decrypt incoming messages
 const msgRetryCounterCache = new NodeCache();
+// Map to track last command timestamp per user for anti‑spam cooldown (3 s)
+const userCooldowns = new Map();
 
 // ─── CLOUD HEALTH SERVER (Required for Render free Web Service) ──────────────
 const express = require('express');
@@ -159,9 +161,12 @@ async function startBot() {
     }
 
     await initBaileys();
+        // Initialise in‑memory store (persisted to ./session/baileys_store.json)
+        const store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
+        store.readFromFile('./session/baileys_store.json');
 
-    const { version, isLatest } = await fetchLatestBaileysVersion();
-    const { state, saveCreds } = await useMultiFileAuthState('session');
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        const { state, saveCreds } = await useMultiFileAuthState('session');
 
     console.log(`🤖 Starting bot... WA v${version.join('.')} (isLatest: ${isLatest})`);
 
@@ -183,6 +188,9 @@ async function startBot() {
             };
         }
     });
+    // Bind store to the socket for proper message decryption and caching
+    store.bind(conn.ev);
+    conn.store = store;
 
     conn.ev.on('creds.update', saveCreds);
 
@@ -461,6 +469,16 @@ async function startBot() {
                 const isPairedUser = m.senderNumber === botNumber || normalizeJid(m.sender) === botJid;
                 const isConfigOwner = Array.isArray(global.owner) && global.owner.includes(m.senderNumber);
                 const isOwner = isFromMe || isPairedUser || isConfigOwner;
+        // Apply cooldown for non‑owner users (3 seconds)
+        const now = Date.now();
+        if (!isOwner) {
+            const last = userCooldowns.get(m.sender) || 0;
+            if (now - last < 3000) {
+                console.log(`⏱️ Cooldown: ignoring command from ${m.sender}`);
+                continue; // skip processing this message
+            }
+            userCooldowns.set(m.sender, now);
+        }
                 const isSudo = Array.isArray(global.sudo) && global.sudo.includes(m.senderNumber);
 
                 console.log(`📩 [INCOMING] From: ${m.senderNumber || m.chat} | Text: "${body}" | isCmd: ${isCmd} | command: "${command}" | isOwner: ${isOwner}`);
@@ -494,6 +512,12 @@ async function startBot() {
                 }
 
                 const reply = async (text) => {
+                    // Simulate human typing presence before sending a reply
+                    try {
+                        await conn.sendPresenceUpdate('composing', from);
+                        // Random delay between 500‑1500 ms
+                        await new Promise(r => setTimeout(r, 500 + Math.random() * 1000));
+                    } catch (_) { /* ignore presence errors */ }
                     const textStr = String(text);
                     const res = await conn.sendMessage(from, { text: textStr }, { quoted: m });
                     if (textStr.toLowerCase().includes('error')) {
