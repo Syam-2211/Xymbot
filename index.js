@@ -239,6 +239,7 @@ async function startBot() {
     const conn = makeWASocket({
         version,
         logger: pino({ level: 'silent' }),
+        printQRInTerminal: false,
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
@@ -321,7 +322,13 @@ async function startBot() {
     conn.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
-            console.warn('⚠️ Session expired or invalid. Please generate a new SESSION_ID on the Pairing Site.');
+            console.error('\n======================================================');
+            console.error('❌ SESSION EXPIRED OR LOGGED OUT!');
+            console.error('👉 Please link your number on the Pairing Site:');
+            console.error('   https://xymbot-pairing.onrender.com');
+            console.error('👉 Then update SESSION_ID in your Render Environment.');
+            console.error('======================================================\n');
+            process.exit(1);
         }
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -330,6 +337,9 @@ async function startBot() {
             if (shouldReconnect) {
                 console.log('🔄 Reconnecting in 3 seconds...');
                 setTimeout(startBot, 3000);
+            } else {
+                console.error('❌ Bot logged out. Please re-pair using the Pairing Site.');
+                process.exit(1);
             }
         } else if (connection === 'open') {
             console.log('✅ Connected! Bot is online.');
