@@ -98,6 +98,7 @@ async function startBot() {
 
     // Verify license with retry loop (allows Render free instances up to 45s to wake from sleep)
     let licenseVerified = false;
+    const licenseServer = (process.env.LICENSE_SERVER_URL || 'https://xymbot-pairing.onrender.com').replace(/\/+$/, '');
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -105,7 +106,7 @@ async function startBot() {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 15000);
             
-            const response = await fetch(`https://xymbot-pairing.onrender.com/api/verify-license?key=${encodeURIComponent(licenseKey)}`, {
+            const response = await fetch(`${licenseServer}/api/verify-license?key=${encodeURIComponent(licenseKey)}`, {
                 signal: controller.signal
             });
             clearTimeout(timeout);
@@ -129,7 +130,7 @@ async function startBot() {
     }
 
     if (!licenseVerified) {
-        console.error("❌ Failed to reach License Server after 3 attempts. Please check internet or verify https://xymbot-pairing.onrender.com is live.");
+        console.error(`❌ Failed to reach License Server after 3 attempts. Please check internet or verify ${licenseServer} is live.`);
         process.exit(1);
     }
 
