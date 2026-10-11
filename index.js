@@ -49,25 +49,6 @@ const app = express();
 const PORT = process.env.PORT || 8000;
 app.get('/', (req, res) => res.send(`🤖 ${global.botName || 'Xymbot'} is running 24/7 online!`));
 app.get('/health', (req, res) => res.json({ status: 'ok', bot: global.botName, uptime: process.uptime() }));
-app.get('/get-session', (req, res) => {
-    try {
-        const sessionPath = path.join(__dirname, 'session');
-        if (!fs.existsSync(sessionPath)) return res.status(404).send('No session directory found.');
-        const files = fs.readdirSync(sessionPath);
-        if (!files.length) return res.status(404).send('Session folder is empty.');
-        const obj = {};
-        for (const f of files) {
-            try {
-                obj[f] = fs.readFileSync(path.join(sessionPath, f), 'utf8');
-            } catch (e) {}
-        }
-        const b64 = Buffer.from(JSON.stringify(obj)).toString('base64');
-        const finalSession = 'XYMBOT~' + b64;
-        res.type('text/plain').send(finalSession);
-    } catch (e) {
-        res.status(500).send('Error generating session: ' + e.message);
-    }
-});
 app.listen(PORT, () => console.log(`🌐 Cloud health server listening on port ${PORT}`));
 
 // ─── DECODE SESSION_ID IF PRESENT ───────────────────────────────────────────
@@ -355,21 +336,6 @@ async function startBot() {
             }
 
             loadPlugins(); // Load plugins fresh on connect
-
-            // Automatically print session string to logs for easy copying
-            try {
-                const sFiles = fs.readdirSync(sessionDir);
-                if (sFiles.length > 0) {
-                    const sObj = {};
-                    for (const f of sFiles) {
-                        try { sObj[f] = fs.readFileSync(path.join(sessionDir, f), 'utf8'); } catch (e) {}
-                    }
-                    const sB64 = Buffer.from(JSON.stringify(sObj)).toString('base64');
-                    console.log('\n=================== YOUR SESSION ID ===================');
-                    console.log('XYMBOT~' + sB64);
-                    console.log('=======================================================\n');
-                }
-            } catch (e) {}
 
             // Send startup message to paired owner
             const targetNumber = pairedNumber || (global.owner && global.owner[0]);
