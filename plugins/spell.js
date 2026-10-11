@@ -25,7 +25,14 @@ cmd({
     on: 'text',
     desc: 'Detects typos in commands and suggests the correct one in Manglish.'
 }, async (conn, m, msg, { isCmd, command, body, reply }) => {
-    // Only check if it looks like a command (e.g. starts with . or /) but has a valid word
+    // 1. Never trigger on bot's own messages or status
+    if (m.key?.fromMe) return;
+
+    // 2. Only check if the message actually started with a command prefix (e.g., . or /)
+    const configPrefix = (require('../config').getPrefix() || '.').trim();
+    if (!body || !body.startsWith(configPrefix)) return;
+
+    // 3. Must be an intentional command attempt with at least 2 letters
     if (!isCmd || !command || command.length < 2) return;
 
     let matched = false;

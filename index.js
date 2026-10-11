@@ -674,7 +674,7 @@ async function startBot() {
                                 from,
                                 quoted: m.quoted,
                                 body,
-                                isCmd: true,
+                                isCmd,
                                 command,
                                 args,
                                 q,
