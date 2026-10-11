@@ -89,9 +89,10 @@ function loadPlugins() {
 
 async function startBot() {
     // ─── LICENSE KEY VERIFICATION ──────────────────────────────────────────────
-    const licenseKey = global.LICENSE_KEY || process.env.LICENSE_KEY;
-    if (!licenseKey) {
-        console.error("❌ No License Key provided! Please set LICENSE_KEY in config.js or environment variables.");
+    const licenseKey = (global.LICENSE_KEY || process.env.LICENSE_KEY || '').trim();
+    if (!licenseKey || licenseKey.toUpperCase() === 'XYM-BOT-PAIR') {
+        console.error("❌ No valid License Key provided! Please set a generated LICENSE_KEY in config.js or environment variables.");
+        console.error("ℹ️ Default keys are disabled. Generate an official lifetime key from the Telegram bot.");
         process.exit(1);
     }
 
@@ -111,7 +112,7 @@ async function startBot() {
             
             const data = await response.json();
             if (data.valid) {
-                console.log("✅ License Key Verified!");
+                console.log("✅ License Key Verified! (Lifetime)");
                 licenseVerified = true;
                 break;
             } else {
