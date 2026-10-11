@@ -24,6 +24,7 @@
     "google-tts-api": "^2.0.2",
     "instagram-url-direct": "^2.0.7",
     "nayan-media-downloader": "^0.0.1-security",
+    "node-cache": "^5.1.2",
     "node-id3": "^0.2.9",
     "node-webpmux": "^3.2.1",
     "pino": "^8.0.0",

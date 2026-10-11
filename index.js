@@ -31,7 +31,11 @@ const pino = require("pino");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
 const path = require("path");
+const NodeCache = require("node-cache");
 require('./config');
+
+// Message retry counter cache — required for Baileys to decrypt incoming messages
+const msgRetryCounterCache = new NodeCache();
 
 // ─── CLOUD HEALTH SERVER (Required for Render free Web Service) ──────────────
 const express = require('express');
@@ -168,8 +172,11 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
         },
-        browser: ["Xymbot", "safari", "18.2.0"],
+        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
+        markOnlineOnConnect: true,
+        generateHighQualityLinkPreview: true,
+        msgRetryCounterCache,
         getMessage: async (key) => {
             return {
                 conversation: 'hello'
@@ -325,8 +332,18 @@ async function startBot() {
             if (!chatUpdate.messages || !chatUpdate.messages.length) return;
 
             for (const m of chatUpdate.messages) {
-                if (!m || !m.message) continue;
-                if (m.key.remoteJid === 'status@broadcast') continue;
+                // Debug: log every raw message to diagnose silence
+                const rawKeys = m?.message ? Object.keys(m.message) : [];
+                console.log(`🔬 [RAW MSG] jid=${m?.key?.remoteJid} fromMe=${m?.key?.fromMe} msgKeys=[${rawKeys.join(',')}]`);
+                
+                if (!m || !m.message) {
+                    console.log(`⏭️ [SKIP] No message body, jid=${m?.key?.remoteJid}`);
+                    continue;
+                }
+                if (m.key.remoteJid === 'status@broadcast') {
+                    console.log(`⏭️ [SKIP] Status broadcast`);
+                    continue;
+                }
 
                 // Unwrap any nested message wrappers (ephemeral, view-once, document-with-caption, edited)
                 let message = m.message;
