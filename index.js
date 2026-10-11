@@ -334,28 +334,6 @@ async function startBot() {
                 global.owner.push(pairedNumber);
                 console.log(`👑 Paired WhatsApp account (+${pairedNumber}) registered as Bot Owner & Admin.`);
             }
-
-            loadPlugins(); // Load plugins fresh on connect
-
-            // Send startup message to paired owner
-            const targetNumber = pairedNumber || (global.owner && global.owner[0]);
-            if (targetNumber) {
-                const ownerJid = targetNumber + '@s.whatsapp.net';
-                const startTime = Date.now();
-                conn.sendMessage(ownerJid, { text: '🔄 *Testing connection latency...*' }).then(async (m) => {
-                    const latency = Date.now() - startTime;
-                    const totalCommands = commands.length + handlerPlugins.length;
-                    const msg = `*🚀 BOT CONNECTED SUCCESSFULLY!*\n\n` +
-                        `*🤖 Bot Name:* ${global.botName}\n` +
-                        `*👨‍💻 Owner:* ${global.ownerName}\n` +
-                        `*📱 Paired Number:* +${pairedNumber}\n` +
-                        `*⚙️ Prefix:* .\n` +
-                        `*📦 Total Commands:* ${totalCommands}\n` +
-                        `*⚡ Latency:* ${latency}ms\n\n` +
-                        `_System ready for operations!_`;
-                    await conn.sendMessage(ownerJid, { text: msg });
-                }).catch(() => console.log('Could not send startup message to owner.'));
-            }
         }
     });
 
