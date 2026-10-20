@@ -1,5 +1,10 @@
 const { cmd, commands } = require('../command');
 
+// Anti-Ban: Cooldown tracker for mass mention commands (45 seconds per group)
+const groupTagCooldown = new Map();
+const TAG_COOLDOWN_MS = 45000;
+const MAX_SAFE_MENTIONS = 100;
+
 // ============================
 // 📢 TAG ALL (Visible List)
 // ============================
@@ -11,11 +16,23 @@ cmd({
     category: "group",
     filename: __filename
 },
-async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, participants, groupAdmins, isBotAdmins, isAdmins, reply }) => {
+async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, participants, groupAdmins, isBotAdmins, isAdmins, isOwner, reply }) => {
     try {
         // 1. Safety Checks
         if (!isGroup) return reply(global.LANG.group.GROUP_COMMAND);
-        if (!isAdmins) return reply(global.LANG.group.NOT_ADMIN);
+        if (!isAdmins && !isOwner) return reply(global.LANG.group.NOT_ADMIN);
+
+        // Anti-Ban Cooldown: prevent group members/admins from spamming tagall and causing mass reports
+        const now = Date.now();
+        const lastTag = groupTagCooldown.get(from) || 0;
+        if (!isOwner && (now - lastTag < TAG_COOLDOWN_MS)) {
+            const remaining = Math.ceil((TAG_COOLDOWN_MS - (now - lastTag)) / 1000);
+            return reply(`⏳ *Anti-Ban Protection:* Please wait *${remaining}s* before tagging everyone again.`);
+        }
+        groupTagCooldown.set(from, now);
+
+        // Safe mention list (capped to prevent WhatsApp stanza rejection & report triggers)
+        const safeParticipants = participants.slice(0, MAX_SAFE_MENTIONS);
 
         // 2. Prepare the Message
         let text = `
@@ -24,16 +41,19 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 📢 *Message:* ${q ? q : "Attention Everyone!"}
 ══════════════════
 `;
-        // 3. Loop through all members and add them to text
-        for (let mem of participants) {
+        // 3. Loop through members and add them to text
+        for (let mem of safeParticipants) {
             text += `┣ ➥ @${mem.id.split('@')[0]}\n`;
         }
-        text += `══════════════════`;
+        if (participants.length > MAX_SAFE_MENTIONS) {
+            text += `\n⚠️ _[Anti-Ban Safeguard: Tag capped at ${MAX_SAFE_MENTIONS} members]_`;
+        }
+        text += `\n══════════════════`;
 
         // 4. Send Message with Mentions
         await conn.sendMessage(from, { 
             text: text, 
-            mentions: participants.map(a => a.id) 
+            mentions: safeParticipants.map(a => a.id) 
         }, { quoted: mek });
 
     } catch (e) {
@@ -53,30 +73,32 @@ cmd({
     category: "group",
     filename: __filename
 },
-async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, participants, groupAdmins, isBotAdmins, isAdmins, reply }) => {
+async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, participants, groupAdmins, isBotAdmins, isAdmins, isOwner, reply }) => {
     try {
         if (!isGroup) return reply(global.LANG.group.GROUP_COMMAND);
-        if (!isAdmins) return reply(global.LANG.group.NOT_ADMIN);
+        if (!isAdmins && !isOwner) return reply(global.LANG.group.NOT_ADMIN);
 
-        // If user replies to a message, use that message as the hidetag
-        // If not, use the text they typed (e.g. .hidetag Hello)
+        // Anti-Ban Cooldown: prevent spamming hidetag
+        const now = Date.now();
+        const lastTag = groupTagCooldown.get(from) || 0;
+        if (!isOwner && (now - lastTag < TAG_COOLDOWN_MS)) {
+            const remaining = Math.ceil((TAG_COOLDOWN_MS - (now - lastTag)) / 1000);
+            return reply(`⏳ *Anti-Ban Protection:* Please wait *${remaining}s* before using hidetag again.`);
+        }
+        groupTagCooldown.set(from, now);
+
+        const safeParticipants = participants.slice(0, MAX_SAFE_MENTIONS);
         let text = q ? q : (m.quoted ? m.quoted.text : "Empty Message");
-        let mime = (m.quoted && m.quoted.mimetype) ? m.quoted.mimetype : "";
 
-        // Send the message directly, but inject the mentions list
-        // This triggers the notification for everyone!
-        
         if (m.quoted && (m.quoted.type !== 'conversation' && m.quoted.type !== 'extendedTextMessage')) {
-             // If replying to Media (Image/Video/Sticker), re-send it with mentions
              await conn.sendMessage(from, { 
                 forward: m.quoted, 
-                mentions: participants.map(a => a.id) 
+                mentions: safeParticipants.map(a => a.id) 
             }, { quoted: mek });
         } else {
-            // Just text
             await conn.sendMessage(from, { 
                 text: text, 
-                mentions: participants.map(a => a.id) 
+                mentions: safeParticipants.map(a => a.id) 
             }, { quoted: mek });
         }
 

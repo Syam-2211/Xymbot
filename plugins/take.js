@@ -34,8 +34,8 @@ let handler = async (m, { conn, args, reply }) => {
     }
 
     // Default pack and author
-    let packname = 'My pack';
-    let author = global.ownerName;
+    let packname = global.packname || '✪⃝⸸ꜛꪶ͢𝐒𝐘͔𝐀𝐌 𝐒𝐄𝐑͢ꫂꜜ™';
+    let author = global.author || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
 
     if (args.length > 0) {
         let text = args.join(' ');

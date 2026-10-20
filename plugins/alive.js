@@ -4,7 +4,7 @@ let handler = async (m, { conn, usedPrefix }) => {
     let uptime = clockString(runtime);
 
     let message = `
-╭━━━〔 ✧ *BOT ALIVE* ✧ 〕━━━┈
+╭━━━〔 ✧ *BOT ALIVE* ✧ 〕
 ┃ 👤 *Hello, ${name}!* 👋
 ┃ 🤖 *Bot Name:* 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊
 ┃ 👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓

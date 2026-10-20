@@ -53,10 +53,23 @@ global.botName = botConfig.botName;
 global.WORKTYPE = botConfig.worktype;
 global.sudo = botConfig.sudo;
 
+// ── USER WATERMARKS ───────────────────────────────────────────────────────────
+global.watermarks = [
+    '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓',
+    '✪⃝⸸ꜛꪶ͢𝐒𝐘͔𝐀𝐌 𝐒𝐄𝐑͢ꫂꜜ™',
+    '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊',
+    'XYMBOT',
+    '𝑆𝑌𝛥𝛭.3𝐹𝛸',
+    '複| xʏᴀᴍツ'
+];
+global.watermark = '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
+global.author = '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
+global.packname = '✪⃝⸸ꜛꪶ͢𝐒𝐘͔𝐀𝐌 𝐒𝐄𝐑͢ꫂꜜ™';
+
 // ── API KEYS ─────────────────────────────────────────────────────────────────
 // Please set these in your hosting environment variables or .env file!
-global.GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'your_gemini_api_key_here';
-global.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'your_openai_api_key_here';
+global.GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+global.OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 global.LICENSE_KEY = process.env.LICENSE_KEY || '';
 global.SESSION_ID = process.env.SESSION_ID || '';
 // Initializing the database for your group settings

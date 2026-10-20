@@ -354,6 +354,9 @@ cmd({
     reply(text);
 });
 
+// Anti-Ban: Cooldown map to prevent mention spam flooding (15 seconds per chat)
+const mentionCooldowns = new Map();
+
 // 2. Mention Auto-Responder
 cmd({
     on: 'text',
@@ -364,7 +367,6 @@ cmd({
     try {
         // Find mentioned JIDs
         let mentionedJids = mek.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-
         if (mentionedJids.length === 0) return;
 
         const sudoUsers = global.sudo || [];
@@ -383,6 +385,12 @@ cmd({
 
         if (!isMentioned) return;
 
+        // Anti-Ban Protection: Max 1 mention response every 15s per chat
+        const now = Date.now();
+        const lastTime = mentionCooldowns.get(m.chat) || 0;
+        if (now - lastTime < 15000) return;
+        mentionCooldowns.set(m.chat, now);
+
         const currentConfig = getCmentionConfig();
         let responseType = currentConfig.responseType;
         if (responseType === RESPONSE_TYPES.BOTH) {
@@ -399,6 +407,7 @@ cmd({
             }
 
             let contextInfo = undefined;
+            // Anti-Ban: Quote actual message mek instead of fake 0@s.whatsapp.net product quote
             let quotedMsg = mek;
 
             if (thumbnailBuffer) {
@@ -414,8 +423,6 @@ cmd({
                         renderLargerThumbnail: currentConfig.largeThumbnail
                     }
                 };
-                const randomAmount = PREVIEW_CONFIG.amounts[Math.floor(Math.random() * PREVIEW_CONFIG.amounts.length)];
-                quotedMsg = createProductQuote(thumbnailBuffer, randomAmount);
             }
 
             await sendAudioResponse(conn, m.chat, contextInfo, quotedMsg, mek);

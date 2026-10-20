@@ -1,4 +1,6 @@
 const { cmd, commands } = require('../command');
+const fs = require('fs');
+const path = require('path');
 
 function getLevenshteinDistance(a, b) {
     if (a.length === 0) return b.length;
@@ -12,7 +14,7 @@ function getLevenshteinDistance(a, b) {
                 matrix[i][j] = matrix[i - 1][j - 1];
             } else {
                 matrix[i][j] = Math.min(
-                    matrix[i - 1][j - 1] + 1, 
+                    matrix[i - 1][j - 1] + 1,
                     Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1)
                 );
             }
@@ -24,7 +26,7 @@ function getLevenshteinDistance(a, b) {
 cmd({
     on: 'text',
     desc: 'Detects typos in commands and suggests the correct one in Manglish.'
-}, async (conn, m, msg, { isCmd, command, body, reply }) => {
+}, async (m, { conn, isCmd, command, body, reply, from }) => {
     // 1. Never trigger on bot's own messages or status
     if (m.key?.fromMe) return;
 
@@ -58,7 +60,6 @@ cmd({
 
     for (const validCmd of allCommands) {
         if (!validCmd || typeof validCmd !== 'string') continue;
-        
         const dist = getLevenshteinDistance(command, validCmd);
         if (dist < minDistance) {
             minDistance = dist;
@@ -66,8 +67,27 @@ cmd({
         }
     }
 
+    const prefix = body.charAt(0); // Extract the prefix they used
+
+    // Play the spelling audio (if set) AND send the text reply together
+    const spellingAudioPath = global.cmdAudio && global.cmdAudio['spelling'];
+    if (spellingAudioPath && fs.existsSync(spellingAudioPath)) {
+        try {
+            await conn.sendMessage(from || m.chat, {
+                audio: fs.readFileSync(spellingAudioPath),
+                mimetype: 'audio/ogg; codecs=opus',
+                ptt: true
+            }, { quoted: m });
+        } catch (e) {
+            console.error('[Spell] Failed to send spelling audio:', e.message);
+        }
+    }
+
+    // Send the text suggestion (if a close match was found)
     if (closestCmd) {
-        const prefix = body.charAt(0); // Extract the prefix they used
         await reply(`❓ Ningal udeshichath (Did you mean) *${prefix}${closestCmd}* aano?`);
+    } else {
+        // Unknown command with no close match - still let them know
+        await reply(`❓ *${prefix}${command}* oru valid command alla. Type *${prefix}menu* to see all commands.`);
     }
 });

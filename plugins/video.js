@@ -41,6 +41,10 @@ async(conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, send
 
         // Filter for MP4 formats with audio and video
         const stream = ytdl(url, { filter: (format) => format.container === 'mp4' && format.hasAudio && format.hasVideo });
+        stream.on('error', (err) => {
+            console.error('ytdl stream error:', err.message);
+            reply("❌ Failed to stream video. YouTube is currently blocking direct scraping.");
+        });
         let tmpFile = path.join(__dirname, '../tmp', `${Date.now()}.mp4`);
         
         if (!fs.existsSync(path.join(__dirname, '../tmp'))) {
