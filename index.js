@@ -208,9 +208,14 @@ function loadPlugins() {
 loadPlugins();
 
 async function startBot() {
-    // ─── LICENSE KEY VERIFICATION (WITH SESSION LOCK) ─────────────────────────
+    // ─── LICENSE KEY VERIFICATION (WITH SECURE SESSION HASHING) ───────────────
     const licenseKey = (global.LICENSE_KEY || process.env.LICENSE_KEY || '').trim();
     const rawSessionId = (process.env.SESSION_ID || global.SESSION_ID || '').trim();
+
+    const crypto = require('crypto');
+    const safeSessionId = rawSessionId
+        ? crypto.createHash('sha256').update(rawSessionId).digest('hex').substring(0, 32)
+        : 'unbound-session';
 
     if (licenseKey) {
         const licenseServer = (process.env.LICENSE_SERVER_URL || 'https://xymbot-pairing.onrender.com').replace(/\/+$/, '');
@@ -223,8 +228,7 @@ async function startBot() {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-                // Pass session name along with key to bind 1 license to 1 bot session
-                const verifyUrl = `${licenseServer}/api/verify-license?key=${encodeURIComponent(licenseKey)}&session=${encodeURIComponent(rawSessionId)}`;
+                const verifyUrl = `${licenseServer}/api/verify-license?key=${encodeURIComponent(licenseKey)}&session=${encodeURIComponent(safeSessionId)}`;
 
                 const response = await fetch(verifyUrl, { signal: controller.signal });
                 clearTimeout(timeoutId);
