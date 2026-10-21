@@ -65,9 +65,6 @@ const spellingAudioCooldowns = new Map();
 const messageCache = new Map();
 
 // ─── PERSISTENT POLL CREATION CACHE ─────────────────────────────────────────
-// WhatsApp encrypts poll votes using the poll message's messageSecret.
-// If the bot restarts or messageCache is cleared, cached polls ensure votes
-// can always be decrypted and executed.
 const pollCacheFile = path.join(__dirname, 'session/poll_cache.json');
 let pollCache = {};
 if (fs.existsSync(pollCacheFile)) {
@@ -117,29 +114,24 @@ app.get('/health', (req, res) => res.json({ status: 'ok', bot: global.botName, u
 app.listen(PORT, () => console.log(`🌐 Cloud health server listening on port ${PORT}`));
 
 // ─── DECODE SESSION_ID IF PRESENT ───────────────────────────────────────────
-// Supports: XYMBOT~<base64_of_creds.json>  (new pairing server format)
-//           XYMBOT~<base64_of_json_obj>     (legacy multi-file format)
 const sessionDir = path.join(__dirname, 'session');
 const sessionId = process.env.SESSION_ID || global.SESSION_ID;
 if (sessionId && sessionId.trim()) {
     try {
         if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
-        // Strip prefix and decode
         const raw = sessionId.replace(/^XYMBOT~/i, '').trim();
         let decoded;
         try {
             decoded = Buffer.from(raw, 'base64').toString('utf8');
         } catch (e) {
-            decoded = raw; // already a plain string
+            decoded = raw;
         }
         try {
             const sessionObj = JSON.parse(decoded);
-            // If it's a direct creds.json object (has noiseKey, me, etc.) → write as creds.json
             if (sessionObj.noiseKey || sessionObj.me || sessionObj.signedIdentityKey || sessionObj.registrationId) {
                 fs.writeFileSync(path.join(sessionDir, 'creds.json'), decoded);
                 console.log('✅ Session (creds.json) restored from SESSION_ID!');
             } else {
-                // Legacy format: { 'creds.json': '...', 'app-state-...': '...' }
                 let written = 0;
                 for (const [filename, content] of Object.entries(sessionObj)) {
                     fs.writeFileSync(
@@ -151,7 +143,6 @@ if (sessionId && sessionId.trim()) {
                 console.log(`✅ Session (${written} files) restored from SESSION_ID!`);
             }
         } catch (e) {
-            // Not valid JSON — treat raw decoded string as creds.json content directly
             fs.writeFileSync(path.join(sessionDir, 'creds.json'), decoded);
             console.log('✅ Session (raw creds) restored from SESSION_ID!');
         }
@@ -160,8 +151,6 @@ if (sessionId && sessionId.trim()) {
     }
 }
 
-
-// Load blocked chats globally
 global.blockedChats = [];
 const blockedChatsFile = path.join(__dirname, 'database/blocked_chats.json');
 if (fs.existsSync(blockedChatsFile)) {
@@ -172,17 +161,14 @@ if (fs.existsSync(blockedChatsFile)) {
     }
 }
 
-// Ensure tmp directory exists
 if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp');
 
-// Load custom command audios globally
 global.cmdAudio = {};
 const cmdAudioFile = path.join(__dirname, 'database/cmdaudio.json');
 if (fs.existsSync(cmdAudioFile)) {
     try {
         const rawAudios = JSON.parse(fs.readFileSync(cmdAudioFile, 'utf8'));
         for (const [cmdKey, relOrAbs] of Object.entries(rawAudios)) {
-            // Always resolve to absolute path from __dirname
             const filename = path.basename(relOrAbs);
             const resolvedPath = path.join(__dirname, 'database', 'cmdaudio', filename);
             if (fs.existsSync(resolvedPath)) {
@@ -200,15 +186,14 @@ if (fs.existsSync(cmdAudioFile)) {
 
 // ─── LOAD ALL PLUGINS ONCE AT STARTUP ─────────────────────────────────────────
 const { commands } = require('./command');
-const handlerPlugins = []; // handler-style plugins (module.exports = async fn)
+const handlerPlugins = [];
 
 function loadPlugins() {
-    handlerPlugins.length = 0; // Reset
-    commands.length = 0; // Reset cmd plugins
+    handlerPlugins.length = 0;
+    commands.length = 0;
     const files = fs.readdirSync('./plugins').filter(f => f.endsWith('.js'));
     for (const file of files) {
         try {
-            // Clear cache so fresh code loads on each bot restart
             delete require.cache[require.resolve(`./plugins/${file}`)];
             const plugin = require(`./plugins/${file}`);
             if (typeof plugin === 'function' && plugin.command) {
@@ -220,32 +205,38 @@ function loadPlugins() {
     }
     console.log(`✅ Loaded ${handlerPlugins.length} handler plugins, ${commands.length} cmd plugins.`);
 }
-loadPlugins(); // Load plugins on initial startup
+loadPlugins();
 
 async function startBot() {
-    // ─── LICENSE KEY VERIFICATION ──────────────────────────────────────────────
+    // ─── LICENSE KEY VERIFICATION (WITH SESSION LOCK) ─────────────────────────
     const licenseKey = (global.LICENSE_KEY || process.env.LICENSE_KEY || '').trim();
+    const rawSessionId = (process.env.SESSION_ID || global.SESSION_ID || '').trim();
+
     if (licenseKey) {
         const licenseServer = (process.env.LICENSE_SERVER_URL || 'https://xymbot-pairing.onrender.com').replace(/\/+$/, '');
         const maxRetries = 3;
         let licenseVerified = false;
+
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 console.log(`🔍 Verifying License Key (Attempt ${attempt}/${maxRetries})...`);
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 20000);
-                const response = await fetch(
-                    `${licenseServer}/api/verify-license?key=${encodeURIComponent(licenseKey)}`,
-                    { signal: controller.signal }
-                );
+
+                // Pass session name along with key to bind 1 license to 1 bot session
+                const verifyUrl = `${licenseServer}/api/verify-license?key=${encodeURIComponent(licenseKey)}&session=${encodeURIComponent(rawSessionId)}`;
+
+                const response = await fetch(verifyUrl, { signal: controller.signal });
                 clearTimeout(timeoutId);
+
                 const data = await response.json();
+
                 if (data.valid) {
-                    console.log('✅ License Key Verified! (Lifetime)');
+                    console.log(`✅ License Key Verified! (${data.message || 'Active'})`);
                     licenseVerified = true;
                     break;
                 } else {
-                    console.error(`❌ Invalid License Key: ${data.error}`);
+                    console.error(`❌ License Verification Rejected: ${data.message || data.error || 'Invalid Key'}`);
                     process.exit(1);
                 }
             } catch (error) {
@@ -256,9 +247,8 @@ async function startBot() {
                 }
             }
         }
+
         if (!licenseVerified) {
-            // All retries exhausted — license server may be temporarily down.
-            // Log a warning and allow the bot to continue so it doesn't crash on Render.
             console.warn('⚠️  Could not reach license server after all retries. Proceeding in offline-verified mode.');
             console.warn('⚠️  Please ensure LICENSE_KEY is valid — bot will restart if key is revoked on next check.');
         }
@@ -276,12 +266,10 @@ async function startBot() {
         console.log('======================================================');
 
         if (!pairingNumber && !process.stdin.isTTY) {
-            // Running on Render/cloud with no session and no TTY
             console.error('❌ No SESSION_ID or PAIRING_NUMBER provided.');
             console.error('   → Visit https://xymbot-pairing.onrender.com to get your Session ID.');
             console.error('   → Then set SESSION_ID in your Render environment variables and redeploy.');
             console.log('⏳ Bot will wait for SESSION_ID to be set...');
-            // Don't exit — keep the health server alive so Render doesn't kill the service
             return;
         }
 
@@ -298,23 +286,22 @@ async function startBot() {
     }
 
     await initBaileys();
-        // Initialise in-memory store for better message decryption (gracefully skip if unavailable)
-        let store = null;
-        if (typeof makeInMemoryStore === 'function') {
-            try {
-                store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
-                store.readFromFile('./session/baileys_store.json');
-                console.log('✅ Baileys in-memory store initialised.');
-            } catch (e) {
-                console.warn('⚠️ Could not initialise in-memory store:', e.message);
-                store = null;
-            }
-        } else {
-            console.warn('⚠️ makeInMemoryStore not available in this Baileys version — skipping store.');
+    let store = null;
+    if (typeof makeInMemoryStore === 'function') {
+        try {
+            store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
+            store.readFromFile('./session/baileys_store.json');
+            console.log('✅ Baileys in-memory store initialised.');
+        } catch (e) {
+            console.warn('⚠️ Could not initialise in-memory store:', e.message);
+            store = null;
         }
+    } else {
+        console.warn('⚠️ makeInMemoryStore not available in this Baileys version — skipping store.');
+    }
 
-        const { version, isLatest } = await fetchLatestBaileysVersion();
-        const { state, saveCreds } = await useMultiFileAuthState('session');
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    const { state, saveCreds } = await useMultiFileAuthState('session');
 
     console.log(`🤖 Starting bot... WA v${version.join('.')} (isLatest: ${isLatest})`);
 
@@ -326,10 +313,9 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
         },
-        // Anti-Ban: Use standard Windows desktop signature (avoid Ubuntu Chrome bot fingerprint)
         browser: Browsers.windows('Desktop'),
         syncFullHistory: false,
-        markOnlineOnConnect: false, // Anti-Ban: Do not keep account 24/7 online
+        markOnlineOnConnect: false,
         generateHighQualityLinkPreview: true,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
@@ -345,13 +331,12 @@ async function startBot() {
             return undefined;
         }
     });
-    // Bind store to the socket for proper message decryption and caching
+
     if (store) {
         store.bind(conn.ev);
         conn.store = store;
     }
 
-    // Terminal Pairing Code Generation
     if (!conn.authState.creds.registered && pairingNumber) {
         setTimeout(async () => {
             try {
@@ -393,10 +378,8 @@ async function startBot() {
                     let thumbPath = path.join(__dirname, './assets/mention/thumb.jpg');
                     let thumbBuf = fs.existsSync(thumbPath) ? fs.readFileSync(thumbPath) : Buffer.alloc(0);
 
-                    // Run ffmpeg tagging
                     let taggedMp3 = await tagAudio(audioBuffer, title, artist, thumbBuf);
 
-                    // Overwrite content payload
                     content.audio = taggedMp3;
                     content.mimetype = 'audio/mpeg';
                 }
@@ -405,7 +388,6 @@ async function startBot() {
             }
         }
 
-        // Sequential dispatch queue with humanized presence & spacing
         return new Promise((resolve, reject) => {
             sendQueue.push({ jid, content, options, resolve, reject });
             processSendQueue();
@@ -421,20 +403,17 @@ async function startBot() {
             try {
                 const { jid, content, options, resolve } = item;
 
-                // Human presence emulation (typing / recording)
                 if (jid && !jid.includes('status@broadcast')) {
                     const isAudio = content?.audio || content?.ptt;
                     const presenceType = isAudio ? 'recording' : 'composing';
-                    await conn.sendPresenceUpdate(presenceType, jid).catch(() => {});
+                    await conn.sendPresenceUpdate(presenceType, jid).catch(() => { });
 
-                    // Randomized human delay: 400ms - 900ms
                     const humanDelay = Math.floor(Math.random() * 500) + 400;
                     await sleep(humanDelay);
                 }
 
                 const result = await originalSendMessage(jid, content, options);
 
-                // Store outgoing message in cache so Baileys getMessage() can find it for poll decryption / retries
                 if (result?.key?.id && result?.message) {
                     messageCache.set(result.key.id, result.message);
                     const hasPoll = result.message.pollCreationMessage || result.message.pollCreationMessageV2 || result.message.pollCreationMessageV3 || content?.poll;
@@ -447,12 +426,10 @@ async function startBot() {
                     }
                 }
 
-                // Pause presence
                 if (jid && !jid.includes('status@broadcast')) {
-                    conn.sendPresenceUpdate('paused', jid).catch(() => {});
+                    conn.sendPresenceUpdate('paused', jid).catch(() => { });
                 }
 
-                // Minimum safety pause between consecutive outgoing messages (500ms)
                 await sleep(500);
                 resolve(result);
             } catch (err) {
@@ -511,7 +488,6 @@ async function startBot() {
             console.log('🛡️ Anti-Ban Safeguards & Private Mode are ACTIVE.');
             console.log('======================================================\n');
 
-            // Automatically set logged in / paired user as owner
             const pairedUserJid = conn.user?.id || '';
             const pairedNumber = pairedUserJid ? pairedUserJid.split(':')[0].split('@')[0] : '';
             console.log(`📱 Connected WhatsApp Account: +${pairedNumber} (JID: ${pairedUserJid})`);
@@ -528,7 +504,6 @@ async function startBot() {
         try {
             const groupUpdateHandler = require('./plugins/groupUpdate.js');
             const m = { chat: update.id };
-            // Fetch group metadata for subject and member count
             try {
                 m.metadata = await conn.groupMetadata(update.id);
             } catch (e) {
@@ -540,8 +515,6 @@ async function startBot() {
             console.error('Group Update Error:', e);
         }
     });
-
-
 
     // ─── POLL UPDATES / VOTING HANDLER (messages.update) ──────────────────────
     const processedPollVoteIds = new Set();
@@ -555,7 +528,6 @@ async function startBot() {
                     continue;
                 }
 
-                // Retrieve the original poll creation message
                 const pollCreation = messageCache.get(key.id) || pollCache[key.id] || (store ? await store.loadMessage(key.remoteJid, key.id)?.message : null);
                 if (!pollCreation) {
                     console.log(`⚠️ [Poll Vote] Original poll message ${key.id} not found in cache.`);
@@ -575,10 +547,8 @@ async function startBot() {
                 }
 
                 for (const pollUpdate of update.pollUpdates) {
-                    // Ignore votes made by the bot itself
                     if (pollUpdate.pollUpdateMessageKey?.fromMe) continue;
 
-                    // Deduplicate rapid repeat events
                     const voteMsgId = pollUpdate.pollUpdateMessageKey?.id;
                     if (voteMsgId && processedPollVoteIds.has(voteMsgId)) {
                         continue;
@@ -591,9 +561,9 @@ async function startBot() {
                         }
                     }
 
-                    const voterJid = pollUpdate.pollUpdateMessageKey?.participant 
-                        || pollUpdate.pollUpdateMessageKey?.remoteJid 
-                        || key.participant 
+                    const voterJid = pollUpdate.pollUpdateMessageKey?.participant
+                        || pollUpdate.pollUpdateMessageKey?.remoteJid
+                        || key.participant
                         || key.remoteJid;
                     const voterNumber = voterJid ? voterJid.split('@')[0].split(':')[0] : '';
                     const chatJid = key.remoteJid || pollUpdate.pollUpdateMessageKey?.remoteJid;
@@ -601,8 +571,7 @@ async function startBot() {
                     const normalizeJid = (j) => j ? j.split(':')[0].split('@')[0] + '@s.whatsapp.net' : '';
                     const normVoter = normalizeJid(voterJid);
 
-                    // Find option this voter voted for
-                    const selectedOption = pollVotes.find(opt => 
+                    const selectedOption = pollVotes.find(opt =>
                         Array.isArray(opt.voters) && opt.voters.some(v => normalizeJid(v) === normVoter)
                     );
 
@@ -629,12 +598,11 @@ async function startBot() {
                         }
                     }
 
-                    const voterPushName = conn.store?.contacts?.[voterJid]?.notify 
-                        || conn.store?.contacts?.[voterJid]?.name 
-                        || voterNumber 
+                    const voterPushName = conn.store?.contacts?.[voterJid]?.notify
+                        || conn.store?.contacts?.[voterJid]?.name
+                        || voterNumber
                         || 'User';
 
-                    // Create a synthetic message representing the user's vote command
                     const fakeMsg = {
                         key: {
                             remoteJid: chatJid,
@@ -656,7 +624,6 @@ async function startBot() {
                         isPollVote: true
                     };
 
-                    // Emit to messages.upsert so it goes through full command pipeline safely
                     conn.ev.emit('messages.upsert', {
                         type: 'notify',
                         messages: [fakeMsg]
@@ -670,11 +637,9 @@ async function startBot() {
 
     conn.ev.on('messages.upsert', async (chatUpdate) => {
         try {
-            // Populate message cache so getMessage works for retries
             for (const msg of chatUpdate.messages || []) {
                 if (msg?.key?.id && msg.message) {
                     messageCache.set(msg.key.id, msg.message);
-                    // Keep cache from growing unbounded (keep last 500)
                     if (messageCache.size > 500) {
                         const firstKey = messageCache.keys().next().value;
                         messageCache.delete(firstKey);
@@ -682,23 +647,15 @@ async function startBot() {
                 }
             }
 
-            // Skip 'append' events — these are echoes of the bot's own outgoing
-            // messages reflected back from WhatsApp servers. Processing them causes
-            // commands to execute twice and bot reply-emojis to be parsed as commands.
             if (chatUpdate.type === 'append') return;
-
             if (!chatUpdate.messages || !chatUpdate.messages.length) return;
 
             for (const m of chatUpdate.messages) {
                 if (!m || !m.message) continue;
                 if (m.key.remoteJid === 'status@broadcast') continue;
 
-                // Skip bot's own messages sent from the linked device (fromMe via @lid)
                 if (m.key.fromMe && m.key.remoteJid?.endsWith('@lid')) continue;
 
-                // Anti-Ban: Read receipts are handled AFTER command validation (further below)
-
-                // Unwrap any nested message wrappers (ephemeral, view-once, document-with-caption, edited)
                 let message = m.message;
                 while (
                     message?.ephemeralMessage?.message ||
@@ -716,7 +673,6 @@ async function startBot() {
                     );
                 }
 
-                // ── Set up core message properties ───────────────────────────────
                 m.chat = m.key.remoteJid;
                 m.isGroup = m.chat.endsWith('@g.us');
                 m.sender = m.key.fromMe
@@ -725,7 +681,6 @@ async function startBot() {
                 m.senderNumber = m.sender ? m.sender.split('@')[0].split(':')[0] : '';
                 m.pushName = m.pushName || 'User';
 
-                // Set m.reply so handler-style plugins can use it safely
                 m.reply = (text) => {
                     const opts = !m.key.fromMe ? { quoted: m } : {};
                     return conn.sendMessage(m.chat, { text: String(text) }, opts);
@@ -735,7 +690,6 @@ async function startBot() {
                     !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)
                 ) || 'conversation';
 
-                // Detect quoted/replied-to message
                 const ctxInfo = message?.extendedTextMessage?.contextInfo
                     || message?.imageMessage?.contextInfo
                     || message?.videoMessage?.contextInfo
@@ -762,7 +716,6 @@ async function startBot() {
                     m.quoted = null;
                 }
 
-                // ── Parse body ────────────────────────────────────────────────────
                 const body = (
                     message?.conversation
                     || message?.extendedTextMessage?.text
@@ -780,8 +733,6 @@ async function startBot() {
                 let command = '';
                 let args = [];
 
-                // ── PREFIX-ONLY MODE: Only respond to messages starting with prefix ──────
-                // Non-prefix messages are completely ignored (no read, no processing)
                 if (prefix && body.startsWith(prefix)) {
                     isCmd = true;
                     command = body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase();
@@ -791,17 +742,14 @@ async function startBot() {
                     command = body.split(/ +/).shift().toLowerCase();
                     args = body.split(/ +/).slice(1);
                 } else {
-                    // Not a prefix command — skip entirely, don't read, don't process
                     continue;
                 }
                 const q = args.join(' ');
 
-                // Anti-Ban: Only mark as read when it's a real command being processed
                 if (!m.key.fromMe) {
-                    conn.readMessages([m.key]).catch(() => {});
+                    conn.readMessages([m.key]).catch(() => { });
                 }
 
-                // ── Determine ownership (paired account, fromMe, or global.owner) ──
                 const normalizeJid = (jid) => jid ? jid.split(':')[0].split('@')[0] + '@s.whatsapp.net' : jid;
                 const botJid = normalizeJid(conn.user.id);
                 const botNumber = conn.user.id ? conn.user.id.split(':')[0].split('@')[0] : '';
@@ -810,27 +758,25 @@ async function startBot() {
                 const isPairedUser = m.senderNumber === botNumber || normalizeJid(m.sender) === botJid;
                 const isConfigOwner = Array.isArray(global.owner) && global.owner.includes(m.senderNumber);
                 const isOwner = isFromMe || isPairedUser || isConfigOwner;
-        // ─── ANTI-BAN MULTI-TIER SPAM & BURST SHIELD ─────────────────────
-        const now = Date.now();
-        if (!isOwner && !m.isPollVote) {
-            // Tier 1: Minimum 2-second gap between individual commands
-            const last = userCooldowns.get(m.sender) || 0;
-            if (now - last < 2000) {
-                console.log(`⏱️ Anti-Spam: ignoring command from ${m.sender}`);
-                continue;
-            }
-            userCooldowns.set(m.sender, now);
 
-            // Tier 2: Sliding-window burst cap (max 4 commands per 10 seconds)
-            let history = userCommandHistory.get(m.sender) || [];
-            history = history.filter(ts => now - ts < 10000);
-            if (history.length >= 4) {
-                console.log(`🛡️ Anti-Ban Shield: User ${m.sender} exceeded burst limit (4 cmds/10s). Ignoring.`);
-                continue;
-            }
-            history.push(now);
-            userCommandHistory.set(m.sender, history);
-        }
+                const now = Date.now();
+                if (!isOwner && !m.isPollVote) {
+                    const last = userCooldowns.get(m.sender) || 0;
+                    if (now - last < 2000) {
+                        console.log(`⏱️ Anti-Spam: ignoring command from ${m.sender}`);
+                        continue;
+                    }
+                    userCooldowns.set(m.sender, now);
+
+                    let history = userCommandHistory.get(m.sender) || [];
+                    history = history.filter(ts => now - ts < 10000);
+                    if (history.length >= 4) {
+                        console.log(`🛡️ Anti-Ban Shield: User ${m.sender} exceeded burst limit (4 cmds/10s). Ignoring.`);
+                        continue;
+                    }
+                    history.push(now);
+                    userCommandHistory.set(m.sender, history);
+                }
                 const isSudo = Array.isArray(global.sudo) && global.sudo.includes(m.senderNumber);
 
                 console.log(`📩 [INCOMING] From: ${m.senderNumber || m.chat} | Text: "${body}" | isCmd: ${isCmd} | command: "${command}" | isOwner: ${isOwner}`);
@@ -844,7 +790,6 @@ async function startBot() {
                     continue;
                 }
 
-                // ── Determine group admin status (Owner is automatically Admin) ────
                 const from = m.chat;
                 let groupMetadata = null, groupName = '', participants = [],
                     groupAdmins = [], isBotAdmins = false, isAdmins = isOwner;
@@ -879,12 +824,9 @@ async function startBot() {
                     return res;
                 };
 
-                // ── Check Blocked Chat ──────────────────────────────────────────────
                 const isBlockedChat = global.blockedChats && global.blockedChats.includes(from);
-
                 let isExactCommandMatch = false;
 
-                // ── Run handler-style plugins ─────────────────────────────────────
                 for (const plugin of handlerPlugins) {
                     if (isBlockedChat && !isOwner) continue;
 
@@ -914,7 +856,6 @@ async function startBot() {
                                 reply
                             });
 
-                            // Custom Audio for handler plugins (like alive)
                             if (isCmd && global.cmdAudio && !m.audioPlayed) {
                                 if (global.cmdAudio[command]) {
                                     const audioFile = global.cmdAudio[command];
@@ -925,10 +866,10 @@ async function startBot() {
                                         try {
                                             m.audioPlayed = true;
                                             console.log(`🎵 [Audio] Playing '${command}' audio: ${absAudioFile}`);
-                                            await conn.sendMessage(from, { 
-                                                audio: fs.readFileSync(absAudioFile), 
-                                                mimetype: 'audio/ogg; codecs=opus', 
-                                                ptt: true 
+                                            await conn.sendMessage(from, {
+                                                audio: fs.readFileSync(absAudioFile),
+                                                mimetype: 'audio/ogg; codecs=opus',
+                                                ptt: true
                                             }, { quoted: m });
                                         } catch (err) {
                                             console.error('Failed to send handler custom audio:', err);
@@ -944,10 +885,8 @@ async function startBot() {
                     }
                 }
 
-                // ── Run cmd-style plugins ─────────────────────────────────────────
                 for (const cmd of commands) {
                     if (isBlockedChat && !isOwner) {
-                        // Bypass block ONLY for the mention auto-responder
                         if (cmd.desc !== 'Auto-responds when bot or SUDO is mentioned') {
                             continue;
                         }
@@ -997,7 +936,6 @@ async function startBot() {
                                 reply
                             });
 
-                            // Custom Audio logic
                             if (isCmd && global.cmdAudio && !m.audioPlayed) {
                                 let matchedCmd = null;
                                 if (global.cmdAudio[command]) matchedCmd = command;
@@ -1022,12 +960,12 @@ async function startBot() {
                                         try {
                                             m.audioPlayed = true;
                                             console.log(`🎵 [Audio] Playing '${matchedCmd}' audio: ${absAudioFile}`);
-                                            await conn.sendMessage(from, { 
-                                                audio: fs.readFileSync(absAudioFile), 
-                                                mimetype: 'audio/ogg; codecs=opus', 
-                                                ptt: true 
+                                            await conn.sendMessage(from, {
+                                                audio: fs.readFileSync(absAudioFile),
+                                                mimetype: 'audio/ogg; codecs=opus',
+                                                ptt: true
                                             }, { quoted: m });
-                                        } catch(e) {
+                                        } catch (e) {
                                             console.error('Failed to send custom cmd audio:', e);
                                         }
                                     } else {
@@ -1040,7 +978,6 @@ async function startBot() {
                         console.error(`CMD Plugin Error [${cmd.pattern}]:`, e.message);
                     }
                 }
-                // Note: Unknown command audio + text reply are handled by plugins/spell.js
             }
 
         } catch (err) {
