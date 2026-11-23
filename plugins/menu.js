@@ -32,7 +32,7 @@ let currentMethodIndex = 0;
 
 // Default modes: method rotates randomly across the 3 methods; text style rotates sequentially through the 9 styles
 global.MENU_STYLE = global.MENU_STYLE || 'rotate'; // 'rotate' | 'random' | specific style
-global.MENU_METHOD = global.MENU_METHOD || 'random'; // 'random' | 'rotate' | 'button' | 'card' | 'text'
+global.MENU_METHOD = global.MENU_METHOD || 'text'; // 'text' | 'card' | 'random'
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  FONT CONVERSION UTILITIES
@@ -778,6 +778,7 @@ const sendCardMenu = async (conn, from, mek, text, meta, currentStyleName) => {
             title: `${meta.botName} • [${currentStyleName.toUpperCase()}]`,
             body: `${meta.packname} • ${meta.signature} • ${meta.alias}`,
             thumbnail: thumbBuffer,
+            thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg",
             renderLargerThumbnail: true,
             mediaType: 1,
             sourceUrl: `https://wa.me/${global.owner?.[0] || '919947121619'}`
@@ -785,15 +786,7 @@ const sendCardMenu = async (conn, from, mek, text, meta, currentStyleName) => {
     };
 
     try {
-        if (thumbBuffer) {
-            await conn.sendMessage(from, {
-                image: thumbBuffer,
-                caption: text,
-                contextInfo
-            }, opts);
-        } else {
-            await conn.sendMessage(from, { text, contextInfo }, opts);
-        }
+        await conn.sendMessage(from, { text, contextInfo }, opts);
         await sendMenuAudio(conn, from, mek);
         return true;
     } catch (err) {
@@ -905,13 +898,16 @@ async (conn, mek, m, { from, pushname, args, reply }) => {
     console.log(`📋 [MENU DISPATCH] Style: ${chosenStyle} | Method: ${chosenMethod} | User: ${pushname}`);
 
     if (chosenMethod === 'button') {
-        const success = await sendButtonMenu(conn, from, mek, meta, chosenStyle);
-        if (!success) await sendCardMenu(conn, from, mek, textMenu, meta, chosenStyle).catch(() => sendTextMenu(conn, from, mek, textMenu));
+        const btnOk = await sendButtonMenu(conn, from, mek, meta, chosenStyle);
+        if (!btnOk) {
+            const cardOk = await sendCardMenu(conn, from, mek, textMenu, meta, chosenStyle);
+            if (!cardOk) await sendTextMenu(conn, from, mek, textMenu);
+        }
     } else if (chosenMethod === 'card') {
-        const success = await sendCardMenu(conn, from, mek, textMenu, meta, chosenStyle);
-        if (!success) await sendTextMenu(conn, from, mek, textMenu);
+        const cardOk = await sendCardMenu(conn, from, mek, textMenu, meta, chosenStyle);
+        if (!cardOk) await sendTextMenu(conn, from, mek, textMenu);
     } else {
-        // 'text' / 'texted' method
+        // 'text' / 'texted' method (Image banner + full text + audio)
         await sendTextMenu(conn, from, mek, textMenu);
     }
 });

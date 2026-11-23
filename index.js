@@ -249,7 +249,7 @@ if (fs.existsSync(cmdAudioFile)) {
     try {
         const rawAudios = JSON.parse(fs.readFileSync(cmdAudioFile, 'utf8'));
         for (const [cmdKey, relOrAbs] of Object.entries(rawAudios)) {
-            const filename = path.basename(relOrAbs);
+            const filename = relOrAbs.split(/[/\\]/).pop();
             const resolvedPath = path.join(__dirname, 'database', 'cmdaudio', filename);
             if (fs.existsSync(resolvedPath)) {
                 global.cmdAudio[cmdKey] = resolvedPath;
