@@ -132,7 +132,7 @@ async function restoreSession() {
         console.log('✅ Existing valid session detected in session directory.');
         return;
     } else if (fs.existsSync(credsPath)) {
-        try { fs.unlinkSync(credsPath); } catch (_) { }
+        try { fs.unlinkSync(credsPath); } catch (_) {}
     }
 
     const sessionId = (process.env.SESSION_ID || process.env.SESSION_NAME || global.SESSION_ID || '').trim();
@@ -528,7 +528,7 @@ async function startBot() {
         const buffer = await downloadMediaMessage(
             { key: msgObj.key || {}, message: rawMsg },
             
-                            const botName = global.botName || '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊';
+        const botName = global.botName || '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊';
         const ownerName = global.ownerName || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
 
         const startMessage = `
@@ -562,6 +562,59 @@ _Enjoy the service! Powered by ${ownerName}_ 🍓`.trim();
                     mediaType: 1,
                     renderLargerThumbnail: true
                 }
+            }
+
+            // ── Send startup greeting & vote of thanks to the paired number ──
+            if (!global.startupGreetSent) {
+                global.startupGreetSent = true;
+                setTimeout(async () => {
+                    try {
+                        const botJid = conn.user?.id ? (conn.user.id.split(':')[0] + '@s.whatsapp.net') : conn.user?.jid;
+                        if (botJid) {
+                            const configMod = require('./config');
+                            const prefix = (typeof configMod?.getPrefix === 'function' ? configMod.getPrefix() : '.') || '.';
+                            const botName = global.botName || '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊';
+                            const ownerName = global.ownerName || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
+
+                            const startMessage = `
+╭━━━〔 ✧ *BOT CONNECTED* ✧ 〕
+┃ 🤖 *Bot:* ${botName}
+┃ 👑 *Owner:* ${ownerName}
+┃ ⚡ *Prefix:* [ ${prefix} ]
+┃ 🌐 *Mode:* ${global.WORKTYPE || 'public'}
+┃ 🚀 *Status:* Online & Active!
+╰━━━━━━━━━━━━━━━━━━━━━━━━┈
+
+✨ *THANK YOU FOR CHOOSING ${botName}!* ✨
+_Your bot has been successfully deployed and connected to WhatsApp._
+
+📌 *Quick Start Commands:*
+• *${prefix}menu* — View all bot features
+• *${prefix}ping* — Check bot response latency
+• *${prefix}alive* — Check bot uptime & status
+• *${prefix}owner* — Contact owner
+
+_Enjoy the service! Powered by ${ownerName}_ 🍓`.trim();
+
+                            await conn.sendMessage(botJid, {
+                                text: startMessage,
+                                contextInfo: {
+                                    externalAdReply: {
+                                        title: `${botName} CONNECTED`,
+                                        body: `Thank you for choosing ${botName}!`,
+                                        thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg",
+                                        sourceUrl: "https://instagram.com/syam.fun",
+                                        mediaType: 1,
+                                        renderLargerThumbnail: true
+                                    }
+                                }
+                            });
+                            console.log('📨 Sent startup greeting & vote of thanks to paired number:', botJid);
+                        }
+                    } catch (err) {
+                        console.error('⚠️ Could not send startup greeting to paired number:', err.message);
+                    }
+                }, 2000);
             }
         });
         console.log('📨 Sent startup greeting & vote of thanks to paired number:', botJid);
