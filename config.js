@@ -40,6 +40,15 @@ try {
     console.error('Error loading bot_config.json', e);
 }
 
+// Allow environment variables to override default/database config
+if (process.env.PREFIX) botConfig.prefix = process.env.PREFIX;
+if (process.env.OWNER_NUMBER) {
+    botConfig.owner = process.env.OWNER_NUMBER.split(',').map(s => s.trim().replace(/[^0-9]/g, '')).filter(Boolean);
+}
+if (process.env.OWNER_NAME) botConfig.ownerName = process.env.OWNER_NAME;
+if (process.env.BOT_NAME) botConfig.botName = process.env.BOT_NAME;
+if (process.env.WORK_TYPE || process.env.WORKTYPE) botConfig.worktype = process.env.WORK_TYPE || process.env.WORKTYPE;
+
 // Ensure database folder exists
 try {
     const dir = path.dirname(configPath);

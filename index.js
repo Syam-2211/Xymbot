@@ -76,42 +76,122 @@ app.listen(PORT, () => {
     console.log(`🌐 Cloud health server listening on port ${PORT}`);
 });
 
-// ─── DECODE SESSION_ID IF PRESENT ───────────────────────────────────────────
+// ─── DECODE SESSION_ID / MONGODB CUSTOM SESSION RESTORE ──────────────────────
 const sessionDir = path.join(__dirname, 'session');
-const sessionId = process.env.SESSION_ID || global.SESSION_ID;
 
-if (sessionId && sessionId.trim()) {
+function isValidCreds(filePath) {
     try {
-        if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
-        const raw = sessionId.replace(/^XYMBOT~/i, '').trim();
-        let decoded;
+        if (!fs.existsSync(filePath)) return false;
+        const raw = fs.readFileSync(filePath, 'utf8');
+        const data = JSON.parse(raw);
+        return !!(data.noiseKey || data.me || data.signedIdentityKey || data.registrationId);
+    } catch {
+        return false;
+    }
+}
+
+async function restoreSession() {
+    const credsPath = path.join(sessionDir, 'creds.json');
+    if (isValidCreds(credsPath)) {
+        console.log('✅ Existing valid session detected in session directory.');
+        return;
+    } else if (fs.existsSync(credsPath)) {
+        try { fs.unlinkSync(credsPath); } catch (_) {}
+    }
+
+    const sessionId = (process.env.SESSION_ID || process.env.SESSION_NAME || global.SESSION_ID || '').trim();
+    if (!sessionId) return;
+
+    if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
+
+    let rawData = null;
+
+    // 1. If MONGO_URI is set, fetch session by custom sessionName or sessionId from MongoDB
+    const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+    if (mongoUri) {
         try {
-            decoded = Buffer.from(raw, 'base64').toString('utf8');
-        } catch (e) {
-            decoded = raw;
-        }
-        try {
-            const sessionObj = JSON.parse(decoded);
-            if (sessionObj.noiseKey || sessionObj.me || sessionObj.signedIdentityKey || sessionObj.registrationId) {
-                fs.writeFileSync(path.join(sessionDir, 'creds.json'), decoded);
-                console.log('✅ Session (creds.json) restored from SESSION_ID!');
-            } else {
-                let written = 0;
-                for (const [filename, content] of Object.entries(sessionObj)) {
-                    fs.writeFileSync(
-                        path.join(sessionDir, filename),
-                        typeof content === 'string' ? content : JSON.stringify(content)
-                    );
-                    written++;
+            console.log(`🍃 Connecting to MongoDB to fetch session: "${sessionId}"...`);
+            let mongoose;
+            try {
+                mongoose = require('mongoose');
+            } catch (e) {
+                console.warn('⚠️ Mongoose module not found, skipping MongoDB session restore.');
+            }
+
+            if (mongoose) {
+                if (mongoose.connection.readyState !== 1) {
+                    await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 10000 });
                 }
-                console.log(`✅ Session (${written} files) restored from SESSION_ID!`);
+                const sessionSchema = new mongoose.Schema({
+                    sessionId: { type: String, required: true },
+                    sessionName: { type: String, unique: true, sparse: true },
+                    sessionData: { type: String, required: true },
+                    createdAt: { type: Date, default: Date.now }
+                });
+                const Session = mongoose.models.Session || mongoose.model('Session', sessionSchema);
+
+                const cleanName = sessionId.replace(/^XYMBOT~/i, '').trim();
+                let doc = await Session.findOne({ sessionName: cleanName });
+                if (!doc) doc = await Session.findOne({ sessionName: cleanName.toLowerCase() });
+                if (!doc) doc = await Session.findOne({ sessionId: sessionId });
+                if (!doc) doc = await Session.findOne({ sessionId: 'XYMBOT~' + cleanName });
+
+                if (doc) {
+                    console.log(`✅ Found custom session "${doc.sessionName || sessionId}" in MongoDB!`);
+                    rawData = doc.sessionData || doc.sessionId;
+                } else {
+                    console.warn(`⚠️ Custom session "${sessionId}" was not found in MongoDB.`);
+                }
+            }
+        } catch (mErr) {
+            console.error('❌ MongoDB session lookup error:', mErr.message);
+        }
+    } else if (!sessionId.startsWith('XYMBOT~') && sessionId.length < 100) {
+        console.warn('⚠️ MONGO_URI is not set! Custom session names require MONGO_URI in environment variables to load from MongoDB.');
+    }
+
+    // 2. If not found in MongoDB, check if sessionId is raw base64 or prefixed with XYMBOT~
+    if (!rawData && (sessionId.startsWith('XYMBOT~') || sessionId.length >= 100)) {
+        rawData = sessionId;
+    }
+
+    // 3. Decode JSON session and write to session directory
+    if (rawData) {
+        try {
+            const raw = rawData.replace(/^XYMBOT~/i, '').trim();
+            let decoded;
+            try {
+                decoded = Buffer.from(raw, 'base64').toString('utf8');
+            } catch (e) {
+                decoded = raw;
+            }
+            try {
+                const sessionObj = JSON.parse(decoded);
+                if (sessionObj.noiseKey || sessionObj.me || sessionObj.signedIdentityKey || sessionObj.registrationId) {
+                    fs.writeFileSync(path.join(sessionDir, 'creds.json'), decoded);
+                    console.log('✅ Session (creds.json) restored successfully!');
+                } else {
+                    let written = 0;
+                    for (const [filename, content] of Object.entries(sessionObj)) {
+                        fs.writeFileSync(
+                            path.join(sessionDir, filename),
+                            typeof content === 'string' ? content : JSON.stringify(content)
+                        );
+                        written++;
+                    }
+                    console.log(`✅ Session (${written} files) restored successfully!`);
+                }
+            } catch (e) {
+                if (decoded.includes('noiseKey') || decoded.includes('registrationId')) {
+                    fs.writeFileSync(path.join(sessionDir, 'creds.json'), decoded);
+                    console.log('✅ Session (raw creds) restored successfully!');
+                } else {
+                    console.error('❌ Session string is not valid JSON credentials.');
+                }
             }
         } catch (e) {
-            fs.writeFileSync(path.join(sessionDir, 'creds.json'), decoded);
-            console.log('✅ Session (raw creds) restored from SESSION_ID!');
+            console.error('❌ Failed to decode session data:', e.message);
         }
-    } catch (e) {
-        console.error('❌ Failed to decode SESSION_ID:', e.message);
     }
 }
 
@@ -122,7 +202,10 @@ async function startBot() {
     console.log('🤖 Initializing Baileys engine...');
     await initBaileys();
 
-    const hasCreds = fs.existsSync(path.join(sessionDir, 'creds.json'));
+    // Restore session credentials from MongoDB or SESSION_ID
+    await restoreSession();
+
+    const hasCreds = isValidCreds(path.join(sessionDir, 'creds.json'));
     let pairingNumber = (process.env.PAIRING_NUMBER || '').replace(/[^0-9]/g, '');
 
     if (!hasCreds) {
@@ -226,6 +309,59 @@ async function startBot() {
             console.log('\n======================================================');
             console.log('✅ Connected! Bot is online and active.');
             console.log('======================================================\n');
+
+            // ── Send startup greeting & vote of thanks to the paired number ──
+            if (!global.startupGreetSent) {
+                global.startupGreetSent = true;
+                setTimeout(async () => {
+                    try {
+                        const botJid = conn.user?.id ? (conn.user.id.split(':')[0] + '@s.whatsapp.net') : conn.user?.jid;
+                        if (botJid) {
+                            const configMod = require('./config');
+                            const prefix = (typeof configMod?.getPrefix === 'function' ? configMod.getPrefix() : '.') || '.';
+                            const botName = global.botName || '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊';
+                            const ownerName = global.ownerName || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
+
+                            const startMessage = `
+╭━━━〔 ✧ *BOT CONNECTED* ✧ 〕
+┃ 🤖 *Bot:* ${botName}
+┃ 👑 *Owner:* ${ownerName}
+┃ ⚡ *Prefix:* [ ${prefix} ]
+┃ 🌐 *Mode:* ${global.WORKTYPE || 'public'}
+┃ 🚀 *Status:* Online & Active!
+╰━━━━━━━━━━━━━━━━━━━━━━━━┈
+
+✨ *THANK YOU FOR CHOOSING ${botName}!* ✨
+_Your bot has been successfully deployed and connected to WhatsApp._
+
+📌 *Quick Start Commands:*
+• *${prefix}menu* — View all bot features
+• *${prefix}ping* — Check bot response latency
+• *${prefix}alive* — Check bot uptime & status
+• *${prefix}owner* — Contact owner
+
+_Enjoy the service! Powered by ${ownerName}_ 🍓`.trim();
+
+                            await conn.sendMessage(botJid, {
+                                text: startMessage,
+                                contextInfo: {
+                                    externalAdReply: {
+                                        title: `${botName} CONNECTED`,
+                                        body: `Thank you for choosing ${botName}!`,
+                                        thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg",
+                                        sourceUrl: "https://instagram.com/syam.fun",
+                                        mediaType: 1,
+                                        renderLargerThumbnail: true
+                                    }
+                                }
+                            });
+                            console.log('📨 Sent startup greeting & vote of thanks to paired number:', botJid);
+                        }
+                    } catch (err) {
+                        console.error('⚠️ Could not send startup greeting to paired number:', err.message);
+                    }
+                }, 2000);
+            }
         }
     });
 
