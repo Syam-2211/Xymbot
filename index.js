@@ -527,41 +527,41 @@ async function startBot() {
 
         const buffer = await downloadMediaMessage(
             { key: msgObj.key || {}, message: rawMsg },
-            
-        const botName = global.botName || '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊';
-        const ownerName = global.ownerName || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
+            'buffer',
+            {},
+            { logger: pino({ level: 'silent' }), reuploadRequest: conn.updateMediaMessage }
+        );
+        const filePath = `./tmp/${Date.now()}.${ext}`;
+        fs.writeFileSync(filePath, buffer);
+        return filePath;
+    };
 
-        const startMessage = `
-╭━━━〔 ✧ *BOT CONNECTED* ✧ 〕
-┃ 🤖 *Bot:* ${botName}
-┃ 👑 *Owner:* ${ownerName}
-┃ ⚡ *Prefix:* [ ${prefix} ]
-┃ 🌐 *Mode:* ${global.WORKTYPE || 'public'}
-┃ 🚀 *Status:* Online & Active!
-╰━━━━━━━━━━━━━━━━━━━━━━━━┈
+    conn.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === 'close') {
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`⚠️ Connection closed (statusCode: ${statusCode}). Reason:`, lastDisconnect?.error?.message || 'Unknown');
+            if (shouldReconnect) {
+                console.log('🔄 Reconnecting in 3 seconds...');
+                setTimeout(startBot, 3000);
+            } else {
+                console.error('❌ Bot logged out. Please provide a new session ID from your pairing site.');
+                process.exit(1);
+            }
+        } else if (connection === 'open') {
+            console.log('\n======================================================');
+            console.log('✅ Connected! Bot is online.');
+            console.log('🛡️ Anti-Ban Safeguards & Private Mode are ACTIVE.');
+            console.log('======================================================\n');
 
-✨ *THANK YOU FOR CHOOSING ${botName}!* ✨
-_Your bot has been successfully deployed and connected to WhatsApp._
-
-📌 *Quick Start Commands:*
-• *${prefix}menu* — View all bot features
-• *${prefix}ping* — Check bot response latency
-• *${prefix}alive* — Check bot uptime & status
-• *${prefix}owner* — Contact owner
-
-_Enjoy the service! Powered by ${ownerName}_ 🍓`.trim();
-
-        await conn.sendMessage(botJid, {
-            text: startMessage,
-            contextInfo: {
-                externalAdReply: {
-                    title: `${botName} CONNECTED`,
-                    body: `Thank you for choosing ${botName}!`,
-                    thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg",
-                    sourceUrl: "https://instagram.com/syam.fun",
-                    mediaType: 1,
-                    renderLargerThumbnail: true
-                }
+            const pairedUserJid = conn.user?.id || '';
+            const pairedNumber = pairedUserJid ? pairedUserJid.split(':')[0].split('@')[0] : '';
+            console.log(`📱 Connected WhatsApp Account: +${pairedNumber} (JID: ${pairedUserJid})`);
+            if (!Array.isArray(global.owner)) global.owner = [];
+            if (pairedNumber && !global.owner.includes(pairedNumber)) {
+                global.owner.push(pairedNumber);
+                console.log(`👑 Paired WhatsApp account (+${pairedNumber}) registered as Bot Owner & Admin.`);
             }
 
             // ── Send startup greeting & vote of thanks to the paired number ──
@@ -614,14 +614,6 @@ _Enjoy the service! Powered by ${ownerName}_ 🍓`.trim();
                     } catch (err) {
                         console.error('⚠️ Could not send startup greeting to paired number:', err.message);
                     }
-                }, 2000);
-            }
-        });
-        console.log('📨 Sent startup greeting & vote of thanks to paired number:', botJid);
-    }
-} catch (err) {
-    console.error('⚠️ Could not send startup greeting to paired number:', err.message);
-}
                 }, 2000);
             }
         }
