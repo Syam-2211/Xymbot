@@ -27,3 +27,24 @@ async (conn, mek, m, { from, isOwner, args, reply }) => {
         reply("❌ Failed to join the group! Either the link was revoked, the bot is banned, or an error occurred.");
     }
 });
+
+cmd({
+    pattern: "leave",
+    alias: ["out", "leavegroup"],
+    react: "👋",
+    desc: "Leave the current group",
+    category: "owner",
+    filename: __filename
+},
+async (conn, mek, m, { from, isGroup, isOwner, reply }) => {
+    try {
+        if (!isOwner) return reply("⚠️ Only the bot owner can use this command!");
+        if (!isGroup) return reply("❌ This command only works inside groups!");
+        
+        reply("👋 *Goodbye everyone! Leaving group...*");
+        await conn.groupLeave(from);
+    } catch (e) {
+        console.error(e);
+        reply("❌ Failed to leave the group.");
+    }
+});

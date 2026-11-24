@@ -111,7 +111,8 @@ const COMMAND_SECTIONS = [
             { cmd: 'mediafire', args: '<link>', desc: 'MediaFire file DL', tag: 'Ⓕ' },
             { cmd: 'capcut', args: '<link>', desc: 'CapCut template DL', tag: 'Ⓕ' },
             { cmd: 'reddit', args: '<link>', desc: 'Reddit media DL', tag: 'Ⓕ' },
-            { cmd: 'gitclone', args: '<link>', desc: 'Clone GitHub repo', tag: 'Ⓕ' }
+            { cmd: 'gitclone', args: '<link>', desc: 'Clone GitHub repo', tag: 'Ⓕ' },
+            { cmd: 'dl', args: '<link>', desc: 'Universal multi-platform DL', tag: 'Ⓕ' }
         ]
     },
     {
@@ -265,7 +266,8 @@ const COMMAND_SECTIONS = [
             { cmd: 'jid', args: '', desc: 'Show user or group JID', tag: 'Ⓕ' },
             { cmd: 'settings', args: '', desc: 'Bot configuration menu', tag: 'Ⓕ' },
             { cmd: 'owner', args: '', desc: 'Developer & owner contact', tag: 'Ⓕ' },
-            { cmd: 'speed', args: '', desc: 'System RAM & CPU speeds', tag: 'Ⓕ' }
+            { cmd: 'speed', args: '', desc: 'System RAM & CPU speeds', tag: 'Ⓕ' },
+            { cmd: 'me', args: '', desc: 'Mention bot in DM/group', tag: 'Ⓕ' }
         ]
     }
 ];

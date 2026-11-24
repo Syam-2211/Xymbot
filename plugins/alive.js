@@ -6,8 +6,8 @@ let handler = async (m, { conn, usedPrefix }) => {
     let message = `
 ╭━━━〔 ✧ *BOT ALIVE* ✧ 〕
 ┃ 👤 *Hello, ${name}!* 👋
-┃ 🤖 *Bot Name:* 🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊
-┃ 👑 *Owner:* 🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓
+┃ 🤖 *Bot Name:* ${global.botName || 'XYMBOT'}
+┃ 👑 *Owner:* ${global.ownerName || 'Owner'}
 ┃ 🛡️ *Status:* Online & Protected
 ┃ ⏳ *Uptime:* ${uptime}
 ╰━━━━━━━━━━━━━━━━━━━━━━━━┈
@@ -23,7 +23,7 @@ let handler = async (m, { conn, usedPrefix }) => {
                     title: (global.botName || "XYMBOT") + " IS ALIVE",
                     body: "Developed by " + (global.ownerName || "Owner"),
                     thumbnailUrl: "https://files.catbox.moe/dphztt.jpeg",
-                    sourceUrl: "https://instagram.com/syam.fun",
+                    sourceUrl: "https://github.com",
                     mediaType: 1,
                     renderLargerThumbnail: true
                 }
@@ -34,9 +34,9 @@ let handler = async (m, { conn, usedPrefix }) => {
     }
 };
 
-handler.help = ['alive'];
+handler.help = ['alive', 'uptime'];
 handler.tags = ['main'];
-handler.command = /^(alive|runtime)$/i;
+handler.command = /^(alive|runtime|uptime)$/i;
 
 module.exports = handler;
 

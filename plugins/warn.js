@@ -1,17 +1,23 @@
 let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, isOwner, reply }) => {
     if (!m.isGroup) return reply('This command only works in groups!');
     if (!isAdmin && !isOwner) return reply('❌ This is for Admins/Owner only.');
-    if (!isBotAdmin) return reply('❌ I need Admin privileges to kick users!');
 
     let user = m.message?.extendedTextMessage?.contextInfo?.participant
         || (args[0] ? args[0].replace(/[@\s]/g, '') + '@s.whatsapp.net' : null);
 
-    if (!user) return reply('❌ Reply to or mention a user to warn!');
+    if (!user) return reply(`❌ Reply to or mention a user to ${command}!`);
 
-    // Initialize user in DB if not exists
+    if (!global.db.data.users) global.db.data.users = {};
     if (!global.db.data.users[user]) {
         global.db.data.users[user] = { warn: 0 };
     }
+
+    if (command === 'resetwarn' || command === 'unwarn') {
+        global.db.data.users[user].warn = 0;
+        return reply(`✅ Warnings reset for @${user.split('@')[0]}!`, { mentions: [user] });
+    }
+
+    if (!isBotAdmin) return reply('❌ I need Admin privileges to kick users on reaching max warnings!');
 
     global.db.data.users[user].warn += 1;
     let warnings = global.db.data.users[user].warn;
@@ -35,9 +41,9 @@ let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, 
     }
 };
 
-handler.help = ['warn @user'];
+handler.help = ['warn @user', 'resetwarn @user'];
 handler.tags = ['admin'];
-handler.command = /^(warn)$/i;
+handler.command = /^(warn|resetwarn|unwarn)$/i;
 handler.group = true;
 
 module.exports = handler;

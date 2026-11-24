@@ -862,7 +862,9 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                 command = body.split(/ +/).shift().toLowerCase();
                 args = body.split(/ +/).slice(1);
             } else {
-                continue;
+                isCmd = false;
+                command = '';
+                args = body ? body.split(/ +/) : [];
             }
             const q = args.join(' ');
 
@@ -880,7 +882,7 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
             const isOwner = isFromMe || isPairedUser || isConfigOwner;
 
             const now = Date.now();
-            if (!isOwner && !m.isPollVote) {
+            if (!isOwner && !m.isPollVote && isCmd) {
                 const last = userCooldowns.get(m.sender) || 0;
                 if (now - last < 2000) {
                     console.log(`⏱️ Anti-Spam: ignoring command from ${m.sender}`);
@@ -901,11 +903,11 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
 
             console.log(`📩 [INCOMING] From: ${m.senderNumber || m.chat} | Text: "${body}" | isCmd: ${isCmd} | command: "${command}" | isOwner: ${isOwner}`);
 
-            if (global.WORKTYPE === 'private' && !isOwner) {
+            if (global.WORKTYPE === 'private' && !isOwner && isCmd) {
                 if (isCmd && command) console.log(`🔒 Command '${command}' ignored: Bot is in PRIVATE mode.`);
                 continue;
             }
-            if (global.WORKTYPE === 'sudo' && !isOwner && !isSudo) {
+            if (global.WORKTYPE === 'sudo' && !isOwner && !isSudo && isCmd) {
                 if (isCmd && command) console.log(`👑 Command '${command}' ignored: Bot is in SUDO mode.`);
                 continue;
             }
@@ -947,61 +949,63 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
             const isBlockedChat = global.blockedChats && global.blockedChats.includes(from);
             let isExactCommandMatch = false;
 
-            for (const plugin of handlerPlugins) {
-                if (isBlockedChat && !isOwner) continue;
+            if (isCmd && command) {
+                for (const plugin of handlerPlugins) {
+                    if (isBlockedChat && !isOwner) continue;
 
-                try {
-                    const match = plugin.command instanceof RegExp
-                        ? plugin.command.test(command)
-                        : Array.isArray(plugin.command)
-                            ? plugin.command.includes(command)
-                            : plugin.command === command;
+                    try {
+                        const match = plugin.command instanceof RegExp
+                            ? plugin.command.test(command)
+                            : Array.isArray(plugin.command)
+                                ? plugin.command.includes(command)
+                                : plugin.command === command;
 
-                    if (match) {
-                        isExactCommandMatch = true;
-                        console.log(`⚡ Executing handler plugin for: ${command}`);
-                        await plugin(m, {
-                            conn,
-                            args,
-                            q,
-                            body,
-                            isCmd,
-                            usedPrefix: prefix,
-                            command,
-                            isOwner,
-                            isAdmin: isAdmins,
-                            isBotAdmin: isBotAdmins,
-                            isROwner: isOwner,
-                            from,
-                            reply
-                        });
+                        if (match) {
+                            isExactCommandMatch = true;
+                            console.log(`⚡ Executing handler plugin for: ${command}`);
+                            await plugin(m, {
+                                conn,
+                                args,
+                                q,
+                                body,
+                                isCmd,
+                                usedPrefix: prefix,
+                                command,
+                                isOwner,
+                                isAdmin: isAdmins,
+                                isBotAdmin: isBotAdmins,
+                                isROwner: isOwner,
+                                from,
+                                reply
+                            });
 
-                        if (isCmd && global.cmdAudio && !m.audioPlayed) {
-                            if (global.cmdAudio[command]) {
-                                const audioFile = global.cmdAudio[command];
-                                const absAudioFile = path.isAbsolute(audioFile)
-                                    ? audioFile
-                                    : path.join(__dirname, audioFile);
-                                if (fs.existsSync(absAudioFile)) {
-                                    try {
-                                        m.audioPlayed = true;
-                                        console.log(`🎵 [Audio] Playing '${command}' audio: ${absAudioFile}`);
-                                        await conn.sendMessage(from, {
-                                            audio: fs.readFileSync(absAudioFile),
-                                            mimetype: 'audio/ogg; codecs=opus',
-                                            ptt: true
-                                        }, { quoted: m });
-                                    } catch (err) {
-                                        console.error('Failed to send handler custom audio:', err);
+                            if (isCmd && global.cmdAudio && !m.audioPlayed) {
+                                if (global.cmdAudio[command]) {
+                                    const audioFile = global.cmdAudio[command];
+                                    const absAudioFile = path.isAbsolute(audioFile)
+                                        ? audioFile
+                                        : path.join(__dirname, audioFile);
+                                    if (fs.existsSync(absAudioFile)) {
+                                        try {
+                                            m.audioPlayed = true;
+                                            console.log(`🎵 [Audio] Playing '${command}' audio: ${absAudioFile}`);
+                                            await conn.sendMessage(from, {
+                                                audio: fs.readFileSync(absAudioFile),
+                                                mimetype: 'audio/ogg; codecs=opus',
+                                                ptt: true
+                                            }, { quoted: m });
+                                        } catch (err) {
+                                            console.error('Failed to send handler custom audio:', err);
+                                        }
+                                    } else {
+                                        console.warn(`⚠️ [Audio] Handler: File not found for '${command}': ${absAudioFile}`);
                                     }
-                                } else {
-                                    console.warn(`⚠️ [Audio] Handler: File not found for '${command}': ${absAudioFile}`);
                                 }
                             }
                         }
+                    } catch (e) {
+                        console.error(`Plugin Error (handler):`, e.message);
                     }
-                } catch (e) {
-                    console.error(`Plugin Error (handler):`, e.message);
                 }
             }
 

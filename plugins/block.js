@@ -29,3 +29,33 @@ async (conn, mek, m, { from, isOwner, quoted, text, reply }) => {
         reply("❌ Failed to block user.");
     }
 });
+
+cmd({
+    pattern: "unblock",
+    alias: ["unban"],
+    react: "✅",
+    desc: "Unblock a user.",
+    category: "owner",
+    filename: __filename
+},
+async (conn, mek, m, { from, isOwner, quoted, text, reply }) => {
+    try {
+        if (!isOwner) return reply("⚠️ Only the bot owner can use this command!");
+        
+        let user;
+        if (quoted) {
+            user = quoted.sender || quoted.participant;
+        } else if (text) {
+            user = text.replace(/[^0-9]/g, '') + "@s.whatsapp.net";
+        }
+        
+        if (!user) return reply("⚠️ Reply to a user or mention their number to unblock them!");
+        
+        await conn.updateBlockStatus(user, "unblock");
+        reply("✅ *Successfully unblocked user!*");
+        
+    } catch (e) {
+        console.error(e);
+        reply("❌ Failed to unblock user.");
+    }
+});

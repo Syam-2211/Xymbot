@@ -65,3 +65,39 @@ _Thank you for using my bot!_ ❤️
         reply("❌ Error: " + e);
     }
 });
+
+cmd({
+    pattern: "broadcast",
+    alias: ["bc"],
+    react: "📢",
+    desc: "Send a broadcast blast message to all group chats",
+    category: "owner",
+    filename: __filename
+},
+async (conn, mek, m, { isOwner, q, reply }) => {
+    try {
+        if (!isOwner) return reply("⚠️ Only the bot owner can use broadcast!");
+        let text = q || (m.quoted ? m.quoted.text : '');
+        if (!text) return reply("⚠️ Please provide a message or quote text to broadcast!\nExample: .broadcast Update v2.0 is live!");
+
+        reply("📢 *Broadcasting message to chats...*");
+        const getChats = await conn.groupFetchAllParticipating().catch(() => ({}));
+        const groups = Object.keys(getChats);
+
+        let sent = 0;
+        const bcMsg = `📢 *[XYMBOT OFFICIAL BROADCAST]*\n\n${text}\n\n> Sent by Bot Owner`;
+
+        for (const gid of groups) {
+            try {
+                await conn.sendMessage(gid, { text: bcMsg });
+                sent++;
+                await new Promise(r => setTimeout(r, 1000)); // 1s delay anti-spam
+            } catch (_) {}
+        }
+
+        reply(`✅ Broadcast sent to *${sent}* groups successfully!`);
+    } catch (e) {
+        console.error(e);
+        reply("❌ Broadcast failed.");
+    }
+});

@@ -6,41 +6,17 @@ const path = require('path');
 const ASSETS_DIR = path.join(__dirname, '../assets/mention');
 const AUDIO_DIR = path.join(ASSETS_DIR, 'audio');
 const VIDEO_DIR = path.join(ASSETS_DIR, 'video');
-const THUMB_FILE = path.join(ASSETS_DIR, 'thumb.jpg');
+const DATA_FILE = path.join(__dirname, '../database/cmention_data.json');
+const CONFIG_FILE = path.join(__dirname, '../database/cmention_config.json');
 
 // Ensure directories exist
-[ASSETS_DIR, AUDIO_DIR, VIDEO_DIR].forEach(dir => {
+[ASSETS_DIR, AUDIO_DIR, VIDEO_DIR, path.dirname(DATA_FILE)].forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Create a dummy thumbnail if it doesn't exist
-if (!fs.existsSync(THUMB_FILE)) {
-    // 1x1 transparent JPEG/PNG buffer or just write an empty file so the user knows where to put it
-    fs.writeFileSync(THUMB_FILE, '');
-}
-
-// Preview configuration
-const PREVIEW_CONFIG = {
-    title: '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊',
-    body: '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓',
-    description: 'HABIBBI ONLY ENTERTAINMENT ! ✨',
-    thumbnailUrl: 'https://instagram.com/syam.fun',
-    showAd: false,
-    mediaType: 1,
-    amounts: ['999999', '555555', '222222']
-};
-
-const RESPONSE_TYPES = {
-    AUDIO: 'audio',
-    VIDEO: 'video',
-    BOTH: 'both'
-};
-
-const CONFIG_FILE = path.join(__dirname, '../database/cmention_config.json');
-
 const DEFAULT_CONFIG = {
-    responseType: 'audio',
-    largeThumbnail: true
+    responseType: 'both', // 'text', 'audio', 'video', 'both'
+    enabled: true
 };
 
 function loadCmentionConfig() {
@@ -49,50 +25,56 @@ function loadCmentionConfig() {
             const data = fs.readFileSync(CONFIG_FILE, 'utf8');
             return { ...DEFAULT_CONFIG, ...JSON.parse(data) };
         }
-    } catch (error) {
-        console.log('Loading default cmention config...');
-    }
+    } catch (e) {}
     return DEFAULT_CONFIG;
 }
 
 function saveCmentionConfig(cfg) {
     try {
-        const dir = path.dirname(CONFIG_FILE);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
         return true;
-    } catch (error) {
-        console.error('Failed to save cmention config:', error);
+    } catch (e) {
         return false;
     }
 }
 
-function getCmentionConfig() { return loadCmentionConfig(); }
-
-function createProductQuote(thumbnail, amount) {
-    return {
-        key: { fromMe: false, participant: '0@s.whatsapp.net', remoteJid: '0@s.whatsapp.net' },
-        message: {
-            productMessage: {
-                product: {
-                    productImage: { mimetype: 'image/jpeg', jpegThumbnail: thumbnail },
-                    title: PREVIEW_CONFIG.description,
-                    description: PREVIEW_CONFIG.body,
-                    currencyCode: 'AED',
-                    priceAmount1000: amount,
-                    retailerId: 'raganork',
-                    productImageCount: 1
-                },
-                businessOwnerJid: '0@s.whatsapp.net'
-            }
+function getMentionReply() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            const data = fs.readFileSync(DATA_FILE, 'utf8');
+            return JSON.parse(data);
         }
-    };
+    } catch (e) {}
+    return null;
+}
+
+function setMentionReply(data) {
+    try {
+        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function deleteMentionReply() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            fs.unlinkSync(DATA_FILE);
+        }
+        return true;
+    } catch (e) {
+        return false;
+    }
 }
 
 // Get a random file from a directory
 function getRandomFile(dirPath) {
     try {
-        const files = fs.readdirSync(dirPath).filter(f => fs.statSync(path.join(dirPath, f)).isFile());
+        const files = fs.readdirSync(dirPath).filter(f => {
+            const full = path.join(dirPath, f);
+            return fs.statSync(full).isFile() && !f.startsWith('.');
+        });
         if (files.length === 0) return null;
         const randomFile = files[Math.floor(Math.random() * files.length)];
         return path.join(dirPath, randomFile);
@@ -101,263 +83,486 @@ function getRandomFile(dirPath) {
     }
 }
 
-async function sendAudioResponse(conn, jid, contextInfo, quotedMsg, originalQuote) {
-    const audioFile = getRandomFile(AUDIO_DIR);
-    if (!audioFile) {
-        console.log('No audio files found in assets/mention/audio');
-        return;
+// ═══════════════════════════════════════════════════════════════════════════
+//  CLEAN MENTION EXECUTION (WITHOUT IDENTITY / FAKE PRODUCT QUOTES)
+// ═══════════════════════════════════════════════════════════════════════════
+async function executeMentionResponse(conn, chatJid, quotedMsg, botNumber) {
+    const config = loadCmentionConfig();
+    if (!config.enabled) return;
+
+    const savedReply = getMentionReply();
+    const botName = global.botName || 'XYMBOT';
+
+    // 1. If user set a specific custom mention reply via .cmention set
+    if (savedReply) {
+        switch (savedReply.type) {
+            case 'text':
+                if (savedReply.content) {
+                    await conn.sendMessage(chatJid, {
+                        text: savedReply.content
+                    }, { quoted: quotedMsg });
+                    return;
+                }
+                break;
+
+            case 'image':
+                if (savedReply.filePath && fs.existsSync(savedReply.filePath)) {
+                    await conn.sendMessage(chatJid, {
+                        image: fs.readFileSync(savedReply.filePath),
+                        caption: savedReply.caption || ''
+                    }, { quoted: quotedMsg });
+                    return;
+                } else if (savedReply.url) {
+                    await conn.sendMessage(chatJid, {
+                        image: { url: savedReply.url },
+                        caption: savedReply.caption || ''
+                    }, { quoted: quotedMsg });
+                    return;
+                }
+                break;
+
+            case 'video':
+                if (savedReply.filePath && fs.existsSync(savedReply.filePath)) {
+                    await conn.sendMessage(chatJid, {
+                        video: fs.readFileSync(savedReply.filePath),
+                        caption: savedReply.caption || ''
+                    }, { quoted: quotedMsg });
+                    return;
+                } else if (savedReply.url) {
+                    await conn.sendMessage(chatJid, {
+                        video: { url: savedReply.url },
+                        caption: savedReply.caption || ''
+                    }, { quoted: quotedMsg });
+                    return;
+                }
+                break;
+
+            case 'audio':
+                if (savedReply.filePath && fs.existsSync(savedReply.filePath)) {
+                    await conn.sendMessage(chatJid, {
+                        audio: fs.readFileSync(savedReply.filePath),
+                        mimetype: 'audio/mp4',
+                        ptt: true
+                    }, { quoted: quotedMsg });
+                    return;
+                } else if (savedReply.url) {
+                    await conn.sendMessage(chatJid, {
+                        audio: { url: savedReply.url },
+                        mimetype: 'audio/mp4',
+                        ptt: true
+                    }, { quoted: quotedMsg });
+                    return;
+                }
+                break;
+
+            case 'sticker':
+                if (savedReply.filePath && fs.existsSync(savedReply.filePath)) {
+                    await conn.sendMessage(chatJid, {
+                        sticker: fs.readFileSync(savedReply.filePath)
+                    }, { quoted: quotedMsg });
+                    return;
+                } else if (savedReply.url) {
+                    await conn.sendMessage(chatJid, {
+                        sticker: { url: savedReply.url }
+                    }, { quoted: quotedMsg });
+                    return;
+                }
+                break;
+
+            case 'document':
+                if (savedReply.filePath && fs.existsSync(savedReply.filePath)) {
+                    await conn.sendMessage(chatJid, {
+                        document: fs.readFileSync(savedReply.filePath),
+                        mimetype: 'application/octet-stream',
+                        fileName: savedReply.fileName || 'file',
+                        caption: savedReply.caption || ''
+                    }, { quoted: quotedMsg });
+                    return;
+                }
+                break;
+        }
     }
 
-    const audioBuffer = fs.readFileSync(audioFile);
-
-    await conn.sendMessage(jid, {
-        audio: audioBuffer,
-        mimetype: 'audio/mpeg',
-        ptt: false,
-        contextInfo: contextInfo
-    }, { quoted: quotedMsg || originalQuote });
-}
-
-async function sendVideoResponse(conn, jid, originalQuote) {
-    const videoFile = getRandomFile(VIDEO_DIR);
-    if (!videoFile) {
-        console.log('No video files found in assets/mention/video');
-        return;
+    // 2. Fallback to Audio / Video Media Pools (clean, no fake identities)
+    let resType = config.responseType || 'both';
+    if (resType === 'both') {
+        resType = Math.random() > 0.5 ? 'audio' : 'video';
     }
 
-    const videoBuffer = fs.readFileSync(videoFile);
+    if (resType === 'audio') {
+        const audioFile = getRandomFile(AUDIO_DIR);
+        if (audioFile) {
+            const buffer = fs.readFileSync(audioFile);
+            await conn.sendMessage(chatJid, {
+                audio: buffer,
+                mimetype: 'audio/mp4',
+                ptt: true
+            }, { quoted: quotedMsg });
+            return;
+        }
+    }
 
-    await conn.sendMessage(jid, { video: videoBuffer, ptv: true }, { quoted: originalQuote });
+    if (resType === 'video' || resType === 'both') {
+        const videoFile = getRandomFile(VIDEO_DIR);
+        if (videoFile) {
+            const buffer = fs.readFileSync(videoFile);
+            await conn.sendMessage(chatJid, {
+                video: buffer,
+                ptv: true
+            }, { quoted: quotedMsg });
+            return;
+        }
+    }
+
+    // 3. Clean default greeting if no files exist yet
+    const ownerName = global.ownerName || 'Developer';
+    await conn.sendMessage(chatJid, {
+        text: `Hello! I'm *${botName}*. Someone mentioned me? 🤖\nType *.menu* to view my commands!`
+    }, { quoted: quotedMsg });
 }
 
-// 1. CMention Configuration Command
+// ═══════════════════════════════════════════════════════════════════════════
+//  1. CMENTION MANAGEMENT COMMAND (.cmention)
+// ═══════════════════════════════════════════════════════════════════════════
 cmd({
     pattern: 'cmention',
-    desc: 'Configure mention auto-response settings',
+    alias: ['mention'],
+    desc: 'Auto mention reply management (set, get, del, type, help)',
     category: 'owner',
     filename: __filename
 }, async (conn, mek, m, { args, isOwner, reply }) => {
-    if (!isOwner) return reply('❌ Only owner can configure this.');
-    const input = args.join(' ').toLowerCase();
+    if (!isOwner) return reply('❌ Only the bot owner can configure mention replies.');
 
-    if (!input) {
-        const currentConfig = getCmentionConfig();
-        const configText = `*Current CMention Settings:*\n\n` +
-            `• Response Type: ${currentConfig.responseType}\n` +
-            `• Large Thumbnail: ${currentConfig.largeThumbnail}\n\n` +
-            `*Usage:*\n` +
-            `\.cmention type audio\` - Audio responses only\n` +
-            `\.cmention type video\` - Video responses only\n` +
-            `\.cmention type both\` - Random audio/video\n` +
-            `\.cmention thumb true\` - Enable large thumbnails\n` +
-            `\.cmention thumb false\` - Disable large thumbnails\n\n` +
-            `*Note:* Place your audio files in \`assets/mention/audio\` and video files in \`assets/mention/video\`!`;
-        return reply(configText);
+    const prefix = global.PREFIX || '.';
+    const subcommand = args[0]?.toLowerCase();
+    const input = args.slice(1).join(' ');
+
+    if (!subcommand) {
+        const currentData = getMentionReply();
+        const currentConfig = loadCmentionConfig();
+
+        let statusText = `*Auto Mention Reply Settings*\n\n`;
+        statusText += `• Status: \`${currentConfig.enabled ? 'ENABLED' : 'DISABLED'}\`\n`;
+        statusText += `• Fallback Type: \`${currentConfig.responseType.toUpperCase()}\`\n`;
+        statusText += `• Custom Reply: \`${currentData ? currentData.type.toUpperCase() : 'NOT SET (Using default pool)'}\`\n\n`;
+
+        statusText += `*Available Commands:*\n`;
+        statusText += `• \`${prefix}cmention set <text>\` - Set text mention reply\n`;
+        statusText += `• \`${prefix}cmention set\` (reply to media) - Set audio/video/image/sticker\n`;
+        statusText += `• \`${prefix}cmention get\` - View current mention reply\n`;
+        statusText += `• \`${prefix}cmention del\` - Delete custom mention reply\n`;
+        statusText += `• \`${prefix}cmention type <audio/video/both>\` - Set pool response mode\n`;
+        statusText += `• \`${prefix}cmention help\` - Detailed help\n`;
+        statusText += `• \`${prefix}me\` - Test mention function in DM/group\n`;
+
+        return reply(statusText);
     }
 
-    const setting = args[0];
-    const value = args[1];
+    switch (subcommand) {
+        case 'del':
+        case 'delete':
+            if (deleteMentionReply()) {
+                reply('✅ Custom mention reply deleted successfully! Bot will now use the default media pool or greeting.');
+            } else {
+                reply('❌ Failed to delete mention reply.');
+            }
+            break;
 
-    if (setting === 'type') {
-        const validTypes = ['audio', 'video', 'both'];
-        if (!value || !validTypes.includes(value)) return reply(`_Invalid type! Use: audio, video, or both_\n\n*Example:* \`.cmention type audio\``);
-        const currentConfig = getCmentionConfig();
-        currentConfig.responseType = value;
-        if (saveCmentionConfig(currentConfig)) reply(`✅ _CMention response type set to:_ ${value}\n\n_Settings saved permanently!_`);
-        else reply(`❌ _Failed to save settings!_`);
-    } else if (setting === 'thumb') {
-        if (!value || !['true', 'false'].includes(value)) return reply(`_Invalid value! Use: true or false_\n\n*Example:* \`.cmention thumb true\``);
-        const currentConfig = getCmentionConfig();
-        currentConfig.largeThumbnail = value === 'true';
-        if (saveCmentionConfig(currentConfig)) reply(`✅ _Large thumbnails set to:_ ${value}\n\n_Settings saved permanently!_`);
-        else reply(`❌ _Failed to save settings!_`);
-    } else {
-        reply(`_Unknown setting: '${setting}'!_\n\n*Valid settings:*\n• type - Set response type\n• thumb - Set thumbnail size`);
+        case 'get':
+        case 'show': {
+            const data = getMentionReply();
+            if (!data) {
+                return reply(`No custom mention reply set!\n\n*Usage:*\n• Reply to any message/media and type \`${prefix}cmention set\`\n• Or type \`${prefix}cmention set <text>\``);
+            }
+
+            let resp = `*Current Mention Reply:*\n\n`;
+            resp += `*Type:* \`${data.type.toUpperCase()}\`\n`;
+            if (data.content) resp += `*Content:* _${data.content}_\n`;
+            if (data.caption) resp += `*Caption:* _${data.caption}_\n`;
+            if (data.fileName) resp += `*File:* \`${data.fileName}\`\n`;
+            resp += `*Set on:* _${new Date(data.timestamp).toLocaleString()}_\n`;
+
+            reply(resp);
+            break;
+        }
+
+        case 'set': {
+            // Case A: User replied to a message (audio, video, image, sticker, document, or text)
+            if (m.quoted) {
+                try {
+                    const q = m.quoted;
+                    let mediaType = 'text';
+
+                    if (q.type === 'imageMessage') mediaType = 'image';
+                    else if (q.type === 'videoMessage') mediaType = 'video';
+                    else if (q.type === 'audioMessage') mediaType = 'audio';
+                    else if (q.type === 'stickerMessage') mediaType = 'sticker';
+                    else if (q.type === 'documentMessage') mediaType = 'document';
+
+                    let savedData = {
+                        type: mediaType,
+                        content: '',
+                        caption: q.text || input || '',
+                        timestamp: new Date().toISOString()
+                    };
+
+                    if (mediaType !== 'text') {
+                        reply('⏳ Saving replied media as mention reply...');
+                        const downloaded = await q.download();
+                        const ext = mediaType === 'image' ? '.jpg'
+                            : mediaType === 'video' ? '.mp4'
+                            : mediaType === 'audio' ? '.mp3'
+                            : mediaType === 'sticker' ? '.webp'
+                            : '.bin';
+
+                        const targetPath = path.join(ASSETS_DIR, `mention_reply${ext}`);
+                        fs.copyFileSync(downloaded, targetPath);
+                        try { fs.unlinkSync(downloaded); } catch (_) {}
+
+                        savedData.filePath = targetPath;
+                        savedData.fileName = path.basename(targetPath);
+                    } else {
+                        savedData.content = q.text || input || '';
+                    }
+
+                    if (setMentionReply(savedData)) {
+                        reply(`✅ Mention reply set successfully!\n\n*Type:* \`${savedData.type.toUpperCase()}\`\n*Content:* _${savedData.content || savedData.caption || 'Media file saved'}_`);
+                    } else {
+                        reply('❌ Failed to save mention reply.');
+                    }
+                    return;
+                } catch (e) {
+                    console.error('Error setting mention reply from quote:', e);
+                    return reply('❌ Error saving replied media. Please try again.');
+                }
+            }
+
+            // Case B: User gave text input
+            if (input && input.trim()) {
+                const savedData = {
+                    type: 'text',
+                    content: input.trim(),
+                    caption: '',
+                    timestamp: new Date().toISOString()
+                };
+
+                if (setMentionReply(savedData)) {
+                    reply(`✅ Text mention reply set successfully!\n\n*Content:* _${savedData.content}_`);
+                } else {
+                    reply('❌ Failed to save text mention reply.');
+                }
+                return;
+            }
+
+            reply(`Please provide text or reply to a message!\n\n*Usage:*\n• \`${prefix}cmention set Hello there!\`\n• Reply to an audio/video/image and type \`${prefix}cmention set\``);
+            break;
+        }
+
+        case 'type': {
+            const valid = ['audio', 'video', 'both', 'text'];
+            const val = input.toLowerCase().trim();
+            if (!val || !valid.includes(val)) {
+                return reply(`_Invalid type! Use: audio, video, or both_\n\n*Example:* \`${prefix}cmention type audio\``);
+            }
+            const cfg = loadCmentionConfig();
+            cfg.responseType = val;
+            if (saveCmentionConfig(cfg)) {
+                reply(`✅ Response type set to: *${val.toUpperCase()}*`);
+            } else {
+                reply('❌ Failed to update settings.');
+            }
+            break;
+        }
+
+        case 'help': {
+            const helpText = `*Auto Mention Reply Help* 🤖\n\n` +
+                `When someone mentions @bot or SUDO users, the bot automatically responds.\n\n` +
+                `*Commands:*\n` +
+                `• \`${prefix}cmention set\` - Reply to any message to set it as mention response\n` +
+                `• \`${prefix}cmention set <text>\` - Set text as mention response\n` +
+                `• \`${prefix}cmention get\` - View current mention response\n` +
+                `• \`${prefix}cmention del\` - Delete custom mention response\n` +
+                `• \`${prefix}cmention type <audio/video/both>\` - Choose pool response type\n` +
+                `• \`${prefix}addcmentionaudio <name>\` - Add audio to random pool\n` +
+                `• \`${prefix}addcmentionvideo <name>\` - Add video to random pool\n` +
+                `• \`${prefix}listcmention\` - List all media pool files\n` +
+                `• \`${prefix}me\` - Mention bot to test function in DM/group\n\n` +
+                `_All replies are sent cleanly without fake product cards or hardcoded identities._`;
+            reply(helpText);
+            break;
+        }
+
+        default:
+            reply(`Unknown subcommand: \`${subcommand}\`\nUse \`${prefix}cmention help\` for commands.`);
     }
 });
 
-const { exec } = require('child_process');
+// ═══════════════════════════════════════════════════════════════════════════
+//  2. NEW COMMAND: .me (MENTION BOT NUMBER IN DM & GROUPS TO TEST CMENTION)
+// ═══════════════════════════════════════════════════════════════════════════
+cmd({
+    pattern: 'me',
+    alias: ['botme', 'checkmention', 'testmention'],
+    react: '👋',
+    desc: 'Mention the bot number in DM and groups for checking the cmention function',
+    category: 'main',
+    filename: __filename
+}, async (conn, mek, m, { from, botNumber, reply }) => {
+    try {
+        const cleanNumber = botNumber || (conn.user?.id ? conn.user.id.split(':')[0].split('@')[0] : '');
+        const botJid = cleanNumber + '@s.whatsapp.net';
 
-// Add CMention Audio via WhatsApp
+        // 1. Send the mention message containing the bot's own number
+        await conn.sendMessage(from, {
+            text: `👋 @${cleanNumber}`,
+            mentions: [botJid]
+        }, { quoted: mek });
+
+        // 2. Trigger the cmention response immediately to demonstrate and test the function!
+        await executeMentionResponse(conn, from, mek, cleanNumber);
+
+    } catch (e) {
+        console.error('Error in .me command:', e);
+        reply(`❌ Error testing mention: ${e.message}`);
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  3. POOL MANAGEMENT COMMANDS (.addcmentionaudio, .addcmentionvideo, .listcmention)
+// ═══════════════════════════════════════════════════════════════════════════
 cmd({
     pattern: 'addcmentionaudio',
     react: '🎵',
-    desc: 'Add a mention audio by replying to an audio/voice note',
+    desc: 'Add audio to mention pool by replying to audio/voice note',
     category: 'owner',
-    use: '.addcmentionaudio <name>',
     filename: __filename
 }, async (conn, mek, m, { args, isOwner, reply }) => {
     if (!isOwner) return reply('❌ Only owner can use this.');
-    
+    if (!m.quoted) return reply('Please reply to an audio or voice note message!');
+
     let name = args.join('_').trim().toLowerCase() || `audio_${Date.now()}`;
     name = name.replace(/[^a-z0-9_-]/g, '_');
-    
-    if (!m.quoted) return reply('Please reply to an audio/voice note with this command.\n\nExample: Reply to audio → `.addcmentionaudio myaudio`');
-    const type = m.quoted.type;
-    if (type !== 'audioMessage' && type !== 'documentMessage') {
-        return reply('Please reply to an audio/voice note.');
-    }
-    
+
     try {
         reply('⏳ Saving mention audio...');
-        let mediaPath = await m.quoted.download();
-        const filePath = path.join(AUDIO_DIR, `${name}.ogg`);
-        
-        exec(`ffmpeg -i "${mediaPath}" -c:a libopus -b:a 48k -vbr on -compression_level 10 "${filePath}" -y`, (err) => {
-            try { fs.unlinkSync(mediaPath); } catch (e) {}
-            if (err) return reply('❌ Error converting audio. Please try again.');
-            reply(`✅ Mention audio saved as: *${name}.ogg*\n\nTotal mention audios: ${fs.readdirSync(AUDIO_DIR).filter(f => f.endsWith('.ogg') || f.endsWith('.mp3') || f.endsWith('.opus')).length}`);
-        });
+        const mediaPath = await m.quoted.download();
+        const filePath = path.join(AUDIO_DIR, `${name}.mp3`);
+        fs.copyFileSync(mediaPath, filePath);
+        try { fs.unlinkSync(mediaPath); } catch (_) {}
+        reply(`✅ Mention audio saved as: *${name}.mp3*\n\nTotal mention audios: ${fs.readdirSync(AUDIO_DIR).length}`);
     } catch (e) {
-        console.error(e);
         reply('🚫 Failed to save audio.');
     }
 });
 
-// Add CMention Video via WhatsApp
 cmd({
     pattern: 'addcmentionvideo',
     react: '🎬',
-    desc: 'Add a mention video by replying to a video',
+    desc: 'Add video to mention pool by replying to a video',
     category: 'owner',
-    use: '.addcmentionvideo <name>',
     filename: __filename
 }, async (conn, mek, m, { args, isOwner, reply }) => {
     if (!isOwner) return reply('❌ Only owner can use this.');
-    
+    if (!m.quoted) return reply('Please reply to a video message!');
+
     let name = args.join('_').trim().toLowerCase() || `video_${Date.now()}`;
     name = name.replace(/[^a-z0-9_-]/g, '_');
-    
-    if (!m.quoted) return reply('Please reply to a video with this command.\n\nExample: Reply to video → `.addcmentionvideo myvideo`');
-    const type = m.quoted.type;
-    if (type !== 'videoMessage') {
-        return reply('Please reply to a video message.');
-    }
-    
+
     try {
         reply('⏳ Saving mention video...');
-        let mediaPath = await m.quoted.download();
+        const mediaPath = await m.quoted.download();
         const filePath = path.join(VIDEO_DIR, `${name}.mp4`);
         fs.copyFileSync(mediaPath, filePath);
-        try { fs.unlinkSync(mediaPath); } catch (e) {}
-        reply(`✅ Mention video saved as: *${name}.mp4*\n\nTotal mention videos: ${fs.readdirSync(VIDEO_DIR).filter(f => f.endsWith('.mp4')).length}`);
+        try { fs.unlinkSync(mediaPath); } catch (_) {}
+        reply(`✅ Mention video saved as: *${name}.mp4*\n\nTotal mention videos: ${fs.readdirSync(VIDEO_DIR).length}`);
     } catch (e) {
-        console.error(e);
         reply('🚫 Failed to save video.');
     }
 });
 
-// Delete CMention Audio
 cmd({
     pattern: 'delcmentionaudio',
     react: '🗑️',
     desc: 'Delete a mention audio by name',
     category: 'owner',
-    use: '.delcmentionaudio <name>',
     filename: __filename
 }, async (conn, mek, m, { args, isOwner, reply }) => {
     if (!isOwner) return reply('❌ Only owner can use this.');
-    
-    let name = args.join('_').trim().toLowerCase();
-    if (!name) return reply('Please provide the audio name to delete.\n\nExample: `.delcmentionaudio myaudio`\n\nUse `.listcmention` to see all files.');
-    
-    // Try with common extensions
-    const extensions = ['.ogg', '.mp3', '.opus', '.m4a', '.wav'];
+    const name = args.join('_').trim().toLowerCase();
+    if (!name) return reply('Please specify the audio name to delete. Use `.listcmention` to view names.');
+
+    const exts = ['.mp3', '.ogg', '.opus', '.m4a', ''];
     let deleted = false;
-    for (const ext of extensions) {
-        const filePath = path.join(AUDIO_DIR, name + ext);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+    for (const ext of exts) {
+        const p = path.join(AUDIO_DIR, name + ext);
+        if (fs.existsSync(p)) {
+            fs.unlinkSync(p);
             deleted = true;
             reply(`✅ Deleted mention audio: *${name}${ext}*`);
             break;
         }
     }
-    // Also try exact filename
-    if (!deleted) {
-        const filePath = path.join(AUDIO_DIR, name);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-            deleted = true;
-            reply(`✅ Deleted mention audio: *${name}*`);
-        }
-    }
-    if (!deleted) reply(`🚫 Audio file not found: *${name}*\n\nUse \`.listcmention\` to see all files.`);
+    if (!deleted) reply(`🚫 Audio not found: *${name}*`);
 });
 
-// Delete CMention Video
 cmd({
     pattern: 'delcmentionvideo',
     react: '🗑️',
     desc: 'Delete a mention video by name',
     category: 'owner',
-    use: '.delcmentionvideo <name>',
     filename: __filename
 }, async (conn, mek, m, { args, isOwner, reply }) => {
     if (!isOwner) return reply('❌ Only owner can use this.');
-    
-    let name = args.join('_').trim().toLowerCase();
-    if (!name) return reply('Please provide the video name to delete.\n\nExample: `.delcmentionvideo myvideo`\n\nUse `.listcmention` to see all files.');
-    
-    const extensions = ['.mp4', '.mkv', '.avi', '.webm'];
+    const name = args.join('_').trim().toLowerCase();
+    if (!name) return reply('Please specify the video name to delete. Use `.listcmention` to view names.');
+
+    const exts = ['.mp4', '.mkv', '.avi', ''];
     let deleted = false;
-    for (const ext of extensions) {
-        const filePath = path.join(VIDEO_DIR, name + ext);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+    for (const ext of exts) {
+        const p = path.join(VIDEO_DIR, name + ext);
+        if (fs.existsSync(p)) {
+            fs.unlinkSync(p);
             deleted = true;
             reply(`✅ Deleted mention video: *${name}${ext}*`);
             break;
         }
     }
-    if (!deleted) {
-        const filePath = path.join(VIDEO_DIR, name);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-            deleted = true;
-            reply(`✅ Deleted mention video: *${name}*`);
-        }
-    }
-    if (!deleted) reply(`🚫 Video file not found: *${name}*\n\nUse \`.listcmention\` to see all files.`);
+    if (!deleted) reply(`🚫 Video not found: *${name}*`);
 });
 
-// List all CMention media files
 cmd({
     pattern: 'listcmention',
     react: '📋',
-    desc: 'List all mention audio and video files',
+    desc: 'List all custom mention pool audio and video files',
     category: 'owner',
     filename: __filename
-}, async (conn, mek, m, { isOwner, reply }) => {
-    if (!isOwner) return reply('❌ Only owner can use this.');
-    
-    let audioFiles = [];
-    let videoFiles = [];
-    try { audioFiles = fs.readdirSync(AUDIO_DIR).filter(f => fs.statSync(path.join(AUDIO_DIR, f)).isFile()); } catch (e) {}
-    try { videoFiles = fs.readdirSync(VIDEO_DIR).filter(f => fs.statSync(path.join(VIDEO_DIR, f)).isFile()); } catch (e) {}
-    
-    let text = `📋 *CMention Media Files*\n\n`;
-    text += `🎵 *Audio Files (${audioFiles.length}):*\n`;
-    if (audioFiles.length > 0) {
-        audioFiles.forEach((f, i) => { text += `  ${i + 1}. ${f}\n`; });
-    } else {
-        text += `  _No audio files_\n`;
-    }
-    text += `\n🎬 *Video Files (${videoFiles.length}):*\n`;
-    if (videoFiles.length > 0) {
-        videoFiles.forEach((f, i) => { text += `  ${i + 1}. ${f}\n`; });
-    } else {
-        text += `  _No video files_\n`;
-    }
-    text += `\n*Commands:*\n• \`.addcmentionaudio <name>\` - Reply to audio\n• \`.addcmentionvideo <name>\` - Reply to video\n• \`.delcmentionaudio <name>\` - Delete audio\n• \`.delcmentionvideo <name>\` - Delete video`;
-    
+}, async (conn, mek, m, { reply }) => {
+    let audios = [];
+    let videos = [];
+    try { audios = fs.readdirSync(AUDIO_DIR).filter(f => !f.startsWith('.')); } catch (_) {}
+    try { videos = fs.readdirSync(VIDEO_DIR).filter(f => !f.startsWith('.')); } catch (_) {}
+
+    let text = `📋 *CMention Pool Files*\n\n`;
+    text += `🎵 *Audio Pool (${audios.length}):*\n`;
+    if (audios.length > 0) audios.forEach((f, i) => text += `  ${i + 1}. ${f}\n`);
+    else text += `  _No audio files_\n`;
+
+    text += `\n🎬 *Video Pool (${videos.length}):*\n`;
+    if (videos.length > 0) videos.forEach((f, i) => text += `  ${i + 1}. ${f}\n`);
+    else text += `  _No video files_\n`;
+
+    const saved = getMentionReply();
+    text += `\n📌 *Active Custom Reply:* ${saved ? `\`${saved.type.toUpperCase()}\`` : '_None_'}\n`;
+    text += `\n*Commands:*\n• \`.cmention set <text>\` - Set text response\n• \`.cmention set\` (reply) - Set media response\n• \`.me\` - Test mention response in DM/group`;
+
     reply(text);
 });
 
-// Anti-Ban: Cooldown map to prevent mention spam flooding (15 seconds per chat)
+// ═══════════════════════════════════════════════════════════════════════════
+//  4. AUTO MENTION RESPONDER (TRIGGERED ON ALL TEXT / CONVERSATION MESSAGES)
+// ═══════════════════════════════════════════════════════════════════════════
 const mentionCooldowns = new Map();
 
-// 2. Mention Auto-Responder
 cmd({
     on: 'text',
     desc: 'Auto-responds when bot or SUDO is mentioned',
@@ -365,19 +570,19 @@ cmd({
     filename: __filename
 }, async (conn, mek, m, { botNumber, botLid }) => {
     try {
-        // Find mentioned JIDs
-        let mentionedJids = mek.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-        if (mentionedJids.length === 0) return;
+        const mentionedJids = mek.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        if (!Array.isArray(mentionedJids) || mentionedJids.length === 0) return;
 
+        const cleanBotNumber = botNumber || (conn.user?.id ? conn.user.id.split(':')[0].split('@')[0] : '');
+        const botJid = cleanBotNumber + '@s.whatsapp.net';
+        const botLidJid = botLid ? botLid + '@lid' : '';
         const sudoUsers = global.sudo || [];
         const ownerNumbers = global.owner || [];
-        const botJid = botNumber + '@s.whatsapp.net';
-        const botLidJid = botLid ? botLid + '@lid' : '';
 
         let isMentioned = false;
         for (const jid of mentionedJids) {
             const num = jid.split('@')[0];
-            if (jid === botJid || jid === botLidJid || ownerNumbers.includes(num) || sudoUsers.includes(num)) {
+            if (jid === botJid || (botLidJid && jid === botLidJid) || num === cleanBotNumber || ownerNumbers.includes(num) || sudoUsers.includes(num)) {
                 isMentioned = true;
                 break;
             }
@@ -385,73 +590,44 @@ cmd({
 
         if (!isMentioned) return;
 
-        // Anti-Ban Protection: Max 1 mention response every 15s per chat
+        // Anti-Ban Cooldown: 1 mention response every 8s per chat
         const now = Date.now();
-        const lastTime = mentionCooldowns.get(m.chat) || 0;
-        if (now - lastTime < 15000) return;
+        const last = mentionCooldowns.get(m.chat) || 0;
+        if (now - last < 8000) return;
         mentionCooldowns.set(m.chat, now);
 
-        const currentConfig = getCmentionConfig();
-        let responseType = currentConfig.responseType;
-        if (responseType === RESPONSE_TYPES.BOTH) {
-            responseType = Math.random() > 0.5 ? RESPONSE_TYPES.AUDIO : RESPONSE_TYPES.VIDEO;
-        }
+        await executeMentionResponse(conn, m.chat, mek, cleanBotNumber);
 
-        if (responseType === RESPONSE_TYPES.AUDIO) {
-            let thumbnailBuffer = null;
-            if (fs.existsSync(THUMB_FILE)) {
-                try {
-                    thumbnailBuffer = fs.readFileSync(THUMB_FILE);
-                    if (thumbnailBuffer.length === 0) thumbnailBuffer = null;
-                } catch (e) { }
-            }
-
-            let contextInfo = undefined;
-            // Anti-Ban: Quote actual message mek instead of fake 0@s.whatsapp.net product quote
-            let quotedMsg = mek;
-
-            if (thumbnailBuffer) {
-                contextInfo = {
-                    externalAdReply: {
-                        showAdAttribution: PREVIEW_CONFIG.showAd,
-                        title: PREVIEW_CONFIG.title,
-                        body: PREVIEW_CONFIG.body,
-                        description: PREVIEW_CONFIG.description,
-                        mediaType: PREVIEW_CONFIG.mediaType,
-                        thumbnail: thumbnailBuffer,
-                        thumbnailUrl: PREVIEW_CONFIG.thumbnailUrl,
-                        renderLargerThumbnail: currentConfig.largeThumbnail
-                    }
-                };
-            }
-
-            await sendAudioResponse(conn, m.chat, contextInfo, quotedMsg, mek);
-        } else {
-            await sendVideoResponse(conn, m.chat, mek);
-        }
     } catch (e) {
         console.error('Mention response error:', e);
     }
 });
 
-// 3. Round Video Converter
+// Round Video converter (.vdo)
 cmd({
     pattern: 'vdo',
+    alias: ['roundvid', 'ptv'],
     desc: 'Convert replied video to round video format',
-    category: 'converter',
+    category: 'tools',
     filename: __filename
-}, async (conn, mek, m, { quoted, reply }) => {
-    if (!quoted) return reply('Reply to a video message!');
-    if (quoted.type !== 'videoMessage') return reply('The replied message must be a video!');
+}, async (conn, mek, m, { reply }) => {
+    if (!m.quoted) return reply('Reply to a video message!');
+    if (m.quoted.type !== 'videoMessage') return reply('The replied message must be a video!');
 
     try {
-        const filePath = await quoted.download();
-        const stream = fs.createReadStream(filePath);
-
-        await conn.sendMessage(m.chat, { video: { stream: stream }, ptv: true }, { quoted: mek });
-        fs.unlinkSync(filePath);
+        const filePath = await m.quoted.download();
+        const buffer = fs.readFileSync(filePath);
+        await conn.sendMessage(m.chat, { video: buffer, ptv: true }, { quoted: mek });
+        try { fs.unlinkSync(filePath); } catch (_) {}
     } catch (error) {
         console.error('Round video error:', error);
         reply('Failed to convert video!');
     }
 });
+
+module.exports = {
+    executeMentionResponse,
+    getMentionReply,
+    setMentionReply,
+    deleteMentionReply
+};

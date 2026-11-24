@@ -208,7 +208,7 @@ cmd({ pattern: "igdlv2", filename: __filename },
     });
 
 // 4. Insta Story Download (Lolhuman Story)
-cmd({ pattern: "igdlstory", filename: __filename },
+cmd({ pattern: "igdlstory", alias: ["igstory", "instastory"], filename: __filename },
     async (conn, mek, m, { from, q, reply }) => {
         reply("⏳ *Downloading Story...*");
         let mediaUrls = [];

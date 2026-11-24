@@ -52,6 +52,7 @@ let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, 
 
         case 'antilink':
         case 'antidelete':
+        case 'antispam':
         case 'welcome':
         case 'goodbye': {
             let status = args[0] ? args[0].toLowerCase() : '';
@@ -64,6 +65,24 @@ let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, 
             } else {
                 reply(`Usage: ${usedPrefix + command} on/off`);
             }
+            break;
+        }
+
+        case 'setname': {
+            if (!isBotAdmin) return reply('❌ I need Admin to change the group name!');
+            let text = args.join(' ');
+            if (!text) return reply('❌ Provide a new group name!\nExample: .setname My Group');
+            await conn.groupUpdateSubject(m.chat, text);
+            reply(`✅ Group name changed to: *${text}*`);
+            break;
+        }
+
+        case 'setdesc': {
+            if (!isBotAdmin) return reply('❌ I need Admin to change the group description!');
+            let text = args.join(' ');
+            if (!text) return reply('❌ Provide a new group description!\nExample: .setdesc Welcome to our group!');
+            await conn.groupUpdateDescription(m.chat, text);
+            reply(`✅ Group description updated!`);
             break;
         }
 
@@ -81,6 +100,7 @@ let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, 
             let info = `📊 *BOT GROUP SETTINGS*
 ┠─🛡 *Anti-Link:* ${chat.antilink ? '✅' : '❌'}
 ┠─🛡 *Anti-Delete:* ${chat.antidelete ? '✅' : '❌'}
+┠─🛡 *Anti-Spam:* ${chat.antispam ? '✅' : '❌'}
 ┠─👋 *Welcome:* ${chat.welcome ? '✅' : '❌'}
 ┠─📤 *Goodbye:* ${chat.goodbye ? '✅' : '❌'}
 ┕━━━━━━━━━━━━━━━━━━━
@@ -91,9 +111,9 @@ let handler = async (m, { conn, args, usedPrefix, command, isAdmin, isBotAdmin, 
     }
 };
 
-handler.help = ['add', 'kick', 'promote', 'demote', 'antilink', 'antidelete', 'welcome', 'goodbye', 'ginfo'];
+handler.help = ['add', 'kick', 'promote', 'demote', 'antilink', 'antidelete', 'antispam', 'welcome', 'goodbye', 'setname', 'setdesc', 'ginfo'];
 handler.tags = ['admin'];
-handler.command = /^(add|kick|promote|demote|antilink|antidelete|welcome|goodbye|setwelcome|setgoodbye|ginfo)$/i;
+handler.command = /^(add|kick|promote|demote|antilink|antidelete|antispam|welcome|goodbye|setname|setdesc|setwelcome|setgoodbye|ginfo)$/i;
 handler.group = true;
 
 module.exports = handler;

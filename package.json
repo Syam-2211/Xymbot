@@ -9,6 +9,7 @@
   "dependencies": {
     "@bochilteam/scraper": "^5.0.1",
     "@distube/ytdl-core": "^4.16.12",
+    "@napi-rs/canvas": "^0.1.65",
     "@jerrycoder/instagram-api": "^2.5.9",
     "@sasmeee/igdl": "^0.0.1-security",
     "@vitalets/google-translate-api": "^9.2.1",
