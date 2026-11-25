@@ -810,6 +810,8 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                 message?.viewOnceMessage?.message ||
                 message?.viewOnceMessageV2?.message ||
                 message?.documentWithCaptionMessage?.message ||
+                message?.audioStickerMessage?.message ||
+                message?.lottieStickerMessage?.message ||
                 message?.editedMessage?.message?.protocolMessage?.editedMessage
             ) {
                 message = (
@@ -817,6 +819,8 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                     message?.viewOnceMessage?.message ||
                     message?.viewOnceMessageV2?.message ||
                     message?.documentWithCaptionMessage?.message ||
+                    message?.audioStickerMessage?.message ||
+                    message?.lottieStickerMessage?.message ||
                     message?.editedMessage?.message?.protocolMessage?.editedMessage
                 );
             }
@@ -898,10 +902,6 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                 args = body ? body.split(/ +/) : [];
             }
             const q = args.join(' ');
-
-            if (!m.key.fromMe) {
-                conn.readMessages([m.key]).catch(() => { });
-            }
 
             const normalizeJid = (jid) => jid ? jid.split(':')[0].split('@')[0] + '@s.whatsapp.net' : jid;
             const botJid = normalizeJid(conn.user.id);
@@ -1132,6 +1132,10 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                 } catch (e) {
                     console.error(`CMD Plugin Error [${cmd.pattern}]:`, e.message);
                 }
+            }
+
+            if (!m.key.fromMe && isCmd && isExactCommandMatch) {
+                conn.readMessages([m.key]).catch(() => { });
             }
         }
 

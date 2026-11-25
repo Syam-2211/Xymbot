@@ -230,56 +230,84 @@ function getStickerAudioProtoField() {
 }
 
 /**
- * Send a sound sticker natively if WAProto supports it; otherwise send the
- * sticker + Opus audio track as a reliable fallback.
+ * Ensure `Message.audioStickerMessage` (field 134, FutureProofMessage) exists on
+ * Baileys WAProto at runtime so older WAProto builds don't drop it during encode.
+ */
+function ensureAudioStickerProtoField() {
+    const MessageType = baileys?.proto?.Message?.$type;
+    if (!MessageType) return false;
+    if (MessageType.fields?.audioStickerMessage) return true;
+
+    try {
+        const FieldCtor = MessageType.fieldsArray?.[0]?.constructor;
+        const hasFutureProof = Boolean(
+            baileys?.proto?.Message?.FutureProofMessage ||
+            MessageType.parent?.lookupTypeOrEnum?.('FutureProofMessage')
+        );
+        if (!FieldCtor || !hasFutureProof) return false;
+
+        MessageType.add(new FieldCtor('audioStickerMessage', 134, 'FutureProofMessage'));
+        return Boolean(MessageType.fields?.audioStickerMessage);
+    } catch (err) {
+        console.log('[STICKER] Could not register audioStickerMessage proto field:', err.message);
+        return false;
+    }
+}
+
+/**
+ * Send a WhatsApp sound sticker (animated WebP + embedded Opus audio track)
+ * using WAProto's `audioStickerMessage` (field 134) / `StickerMessage` audio field.
+ * Never sends a separate standalone audio message.
  */
 async function sendSoundSticker(conn, from, stickerBuffer, audioBuffer, mek, isAnimated) {
     const audioProtoField = getStickerAudioProtoField();
+    const hasAudioStickerWrapper = ensureAudioStickerProtoField();
 
     if (
-        audioProtoField &&
+        (hasAudioStickerWrapper || audioProtoField) &&
         baileys?.prepareWAMessageMedia &&
         baileys?.generateWAMessageFromContent
     ) {
-        try {
-            const stickerMedia = await baileys.prepareWAMessageMedia(
-                { sticker: stickerBuffer },
-                { upload: conn.waUploadToServer }
-            );
-            const audioMedia = await baileys.prepareWAMessageMedia(
-                { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: false },
-                { upload: conn.waUploadToServer }
-            );
+        const stickerMedia = await baileys.prepareWAMessageMedia(
+            { sticker: stickerBuffer },
+            { upload: conn.waUploadToServer }
+        );
+        const audioMedia = await baileys.prepareWAMessageMedia(
+            { audio: audioBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: false },
+            { upload: conn.waUploadToServer }
+        );
 
-            if (stickerMedia?.stickerMessage && audioMedia?.audioMessage) {
-                stickerMedia.stickerMessage.isAnimated = Boolean(isAnimated);
+        if (stickerMedia?.stickerMessage && audioMedia?.audioMessage) {
+            stickerMedia.stickerMessage.isAnimated = Boolean(isAnimated);
+
+            if (audioProtoField) {
                 stickerMedia.stickerMessage[audioProtoField] = audioMedia.audioMessage;
-
-                const waMsg = baileys.generateWAMessageFromContent(
-                    from,
-                    { stickerMessage: stickerMedia.stickerMessage },
-                    { userJid: conn.user?.id, quoted: mek }
-                );
-                await conn.relayMessage(from, waMsg.message, { messageId: waMsg.key.id });
-                return { mode: 'native' };
             }
-        } catch (err) {
-            console.log('[STICKER] Native sound sticker relay failed:', err.message);
+
+            const payload = hasAudioStickerWrapper
+                ? {
+                    audioStickerMessage: {
+                        message: {
+                            stickerMessage: stickerMedia.stickerMessage,
+                            ...(audioProtoField ? {} : { audioMessage: audioMedia.audioMessage })
+                        }
+                    }
+                }
+                : { stickerMessage: stickerMedia.stickerMessage };
+
+            const waMsg = baileys.generateWAMessageFromContent(
+                from,
+                payload,
+                { userJid: conn.user?.id, quoted: mek }
+            );
+            await conn.relayMessage(from, waMsg.message, { messageId: waMsg.key.id });
+            return { mode: 'sound-sticker' };
         }
     }
 
-    // Fallback: send sticker + Opus audio separately
+    // If WAProto/Baileys does not support sound sticker encoding at all, send sticker only
     await conn.sendMessage(from, { sticker: stickerBuffer }, { quoted: mek });
-    await conn.sendMessage(
-        from,
-        {
-            audio: audioBuffer,
-            mimetype: 'audio/ogg; codecs=opus',
-            ptt: true
-        },
-        { quoted: mek }
-    );
-    return { mode: 'fallback' };
+    return { mode: 'sticker-only' };
 }
 
 cmd({
@@ -378,10 +406,10 @@ cmd({
 
         if (audioBuffer) {
             const result = await sendSoundSticker(conn, from, stickerBuffer, audioBuffer, mek, isAnimated);
-            if (result.mode === 'native') {
+            if (result.mode === 'sound-sticker') {
                 return reply('✅ Sound sticker sent!');
             }
-            return reply('✅ Sticker and audio track sent! (Native tap-to-play sound stickers require a newer Baileys WAProto update.)');
+            return reply('✅ Sticker sent! (Your Baileys WAProto build does not support embedded sound stickers yet.)');
         }
 
         await conn.sendMessage(from, { sticker: stickerBuffer }, { quoted: mek });
