@@ -520,10 +520,37 @@ async function startBot() {
         const msgType = Object.keys(rawMsg).find(k =>
             !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)
         );
-        const ext = msgType === 'imageMessage' ? 'jpg'
-            : msgType === 'videoMessage' ? 'mp4'
-                : msgType === 'audioMessage' ? 'ogg'
-                    : 'bin';
+        const mimetype = (rawMsg[msgType]?.mimetype || '').toLowerCase();
+        const fileName = rawMsg[msgType]?.fileName || '';
+        const mimeExtMap = {
+            'image/jpeg': 'jpg',
+            'image/jpg': 'jpg',
+            'image/png': 'png',
+            'image/webp': 'webp',
+            'image/gif': 'gif',
+            'video/mp4': 'mp4',
+            'video/webm': 'webm',
+            'video/quicktime': 'mov',
+            'video/x-matroska': 'mkv',
+            'audio/ogg': 'ogg',
+            'audio/opus': 'opus',
+            'audio/mpeg': 'mp3',
+            'audio/mp3': 'mp3',
+            'audio/mp4': 'm4a',
+            'audio/aac': 'aac',
+            'audio/wav': 'wav',
+            'audio/x-wav': 'wav',
+            'audio/flac': 'flac'
+        };
+        const mimeBase = mimetype.split(';')[0].trim();
+        const fileExt = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
+        const ext = mimeExtMap[mimeBase]
+            || fileExt
+            || (msgType === 'imageMessage' ? 'jpg'
+                : msgType === 'videoMessage' ? 'mp4'
+                    : msgType === 'audioMessage' ? 'ogg'
+                        : msgType === 'stickerMessage' ? 'webp'
+                            : 'bin');
 
         const buffer = await downloadMediaMessage(
             { key: msgObj.key || {}, message: rawMsg },
@@ -531,6 +558,7 @@ async function startBot() {
             {},
             { logger: pino({ level: 'silent' }), reuploadRequest: conn.updateMediaMessage }
         );
+        if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp', { recursive: true });
         const filePath = `./tmp/${Date.now()}.${ext}`;
         fs.writeFileSync(filePath, buffer);
         return filePath;
@@ -813,7 +841,9 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
             const ctxInfo = message?.extendedTextMessage?.contextInfo
                 || message?.imageMessage?.contextInfo
                 || message?.videoMessage?.contextInfo
-                || message?.audioMessage?.contextInfo;
+                || message?.audioMessage?.contextInfo
+                || message?.documentMessage?.contextInfo
+                || message?.stickerMessage?.contextInfo;
 
             if (ctxInfo?.quotedMessage) {
                 const qType = Object.keys(ctxInfo.quotedMessage)
@@ -841,6 +871,7 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                 || message?.extendedTextMessage?.text
                 || message?.imageMessage?.caption
                 || message?.videoMessage?.caption
+                || message?.documentMessage?.caption
                 || message?.buttonsResponseMessage?.selectedButtonId
                 || message?.templateButtonReplyMessage?.selectedId
                 || message?.listResponseMessage?.singleSelectReply?.selectedRowId
