@@ -15,9 +15,62 @@ const CONFIG_FILE = path.join(__dirname, '../database/cmention_config.json');
 });
 
 const DEFAULT_CONFIG = {
-    responseType: 'both', // 'text', 'audio', 'video', 'both'
-    enabled: true
+    responseType: 'audio', // 'text', 'audio', 'video', 'both'
+    enabled: true,
+    adCard: {
+        enabled: true,
+        title: '',
+        body: '',
+        url: '',
+        largerThumb: true
+    }
 };
+
+function getAdThumbnail() {
+    const thumbCandidates = [
+        path.join(ASSETS_DIR, 'thumb.jpg'),
+        path.join(ASSETS_DIR, 'thumb.png'),
+        path.join(__dirname, '../assets/thumb.jpg')
+    ];
+    for (const p of thumbCandidates) {
+        if (fs.existsSync(p)) {
+            try {
+                return fs.readFileSync(p);
+            } catch (_) {}
+        }
+    }
+    return undefined;
+}
+
+function buildBusinessAdContext(quotedMsg, botNumber, cfg) {
+    const ad = { ...DEFAULT_CONFIG.adCard, ...(cfg?.adCard || {}) };
+    if (!ad.enabled) return undefined;
+
+    const senderJid = quotedMsg?.sender || quotedMsg?.key?.participant || quotedMsg?.key?.remoteJid;
+    const mentionerName = quotedMsg?.pushName || 'Friend';
+    const ownerName = global.ownerName || global.botName || 'XYMBOT';
+    const cleanNum = (botNumber || (global.owner && global.owner[0]) || '').replace(/[^0-9]/g, '');
+
+    const title = ad.title || `✨ ${ownerName.toUpperCase()} • OFFICIAL`;
+    const body = ad.body || `Hey ${mentionerName}! You tagged me — tap to connect ⚡`;
+    const sourceUrl = ad.url || (cleanNum ? `https://wa.me/${cleanNum}?text=Hello%20${encodeURIComponent(ownerName)}` : 'https://whatsapp.com');
+    const thumbnail = getAdThumbnail();
+
+    const externalAdReply = {
+        title,
+        body,
+        mediaType: 1,
+        renderLargerThumbnail: ad.largerThumb !== false,
+        showAdAttribution: true,
+        sourceUrl
+    };
+    if (thumbnail) externalAdReply.thumbnail = thumbnail;
+
+    return {
+        mentionedJid: senderJid ? [senderJid] : [],
+        externalAdReply
+    };
+}
 
 function loadCmentionConfig() {
     try {
@@ -137,23 +190,27 @@ async function executeMentionResponse(conn, chatJid, quotedMsg, botNumber) {
                 }
                 break;
 
-            case 'audio':
+            case 'audio': {
+                const adCtx = buildBusinessAdContext(quotedMsg, botNumber, config);
                 if (savedReply.filePath && fs.existsSync(savedReply.filePath)) {
                     await conn.sendMessage(chatJid, {
                         audio: fs.readFileSync(savedReply.filePath),
                         mimetype: 'audio/mp4',
-                        ptt: true
+                        ptt: true,
+                        ...(adCtx ? { contextInfo: adCtx } : {})
                     }, { quoted: quotedMsg });
                     return;
                 } else if (savedReply.url) {
                     await conn.sendMessage(chatJid, {
                         audio: { url: savedReply.url },
                         mimetype: 'audio/mp4',
-                        ptt: true
+                        ptt: true,
+                        ...(adCtx ? { contextInfo: adCtx } : {})
                     }, { quoted: quotedMsg });
                     return;
                 }
                 break;
+            }
 
             case 'sticker':
                 if (savedReply.filePath && fs.existsSync(savedReply.filePath)) {
@@ -193,10 +250,12 @@ async function executeMentionResponse(conn, chatJid, quotedMsg, botNumber) {
         const audioFile = getRandomFile(AUDIO_DIR);
         if (audioFile) {
             const buffer = fs.readFileSync(audioFile);
+            const adCtx = buildBusinessAdContext(quotedMsg, botNumber, config);
             await conn.sendMessage(chatJid, {
                 audio: buffer,
                 mimetype: 'audio/mp4',
-                ptt: true
+                ptt: true,
+                ...(adCtx ? { contextInfo: adCtx } : {})
             }, { quoted: quotedMsg });
             return;
         }
@@ -249,6 +308,9 @@ cmd({
         statusText += `*Available Commands:*\n`;
         statusText += `• \`${prefix}cmention set <text>\` - Set text mention reply\n`;
         statusText += `• \`${prefix}cmention set\` (reply to media) - Set audio/video/image/sticker\n`;
+        statusText += `• \`${prefix}cmention ad on/off\` - Toggle Business Ad-Card on audio\n`;
+        statusText += `• \`${prefix}cmention adset <title> | <body> | <url>\` - Customize Ad-Card\n`;
+        statusText += `• \`${prefix}cmention adthumb\` (reply to image) - Set Ad-Card thumbnail\n`;
         statusText += `• \`${prefix}cmention get\` - View current mention reply\n`;
         statusText += `• \`${prefix}cmention del\` - Delete custom mention reply\n`;
         statusText += `• \`${prefix}cmention type <audio/video/both>\` - Set pool response mode\n`;
@@ -259,6 +321,60 @@ cmd({
     }
 
     switch (subcommand) {
+        case 'ad': {
+            const cfg = loadCmentionConfig();
+            if (!cfg.adCard) cfg.adCard = { ...DEFAULT_CONFIG.adCard };
+            const toggle = input.toLowerCase().trim();
+            if (!['on', 'off'].includes(toggle)) {
+                return reply(
+                    `💼 *Business Ad-Card:* ${cfg.adCard.enabled ? '✅ ON' : '❌ OFF'}\n` +
+                    `• *Title:* ${cfg.adCard.title || '_Auto_'}\n` +
+                    `• *Body:* ${cfg.adCard.body || '_Auto_'}\n` +
+                    `• *URL:* ${cfg.adCard.url || '_Auto wa.me link_'}\n\n` +
+                    `Usage:\n• \`.cmention ad on/off\`\n• \`.cmention adset <title> | <body> | <url>\`\n• \`.cmention adthumb\` (reply to image)`
+                );
+            }
+            cfg.adCard.enabled = toggle === 'on';
+            saveCmentionConfig(cfg);
+            return reply(`${cfg.adCard.enabled ? '✅' : '❌'} Business Ad-Card for audio mentions is now *${cfg.adCard.enabled ? 'ON' : 'OFF'}*.`);
+        }
+
+        case 'adset': {
+            if (!input.trim()) {
+                return reply('❌ Usage: `.cmention adset <title> | <body> | <url>`\nExample: `.cmention adset 👑 SYAM OFFICIAL | Tap to chat with me ⚡ | https://wa.me/919947121619`');
+            }
+            const parts = input.split('|').map(p => p.trim());
+            const cfg = loadCmentionConfig();
+            if (!cfg.adCard) cfg.adCard = { ...DEFAULT_CONFIG.adCard };
+            if (parts[0] !== undefined && parts[0]) cfg.adCard.title = parts[0];
+            if (parts[1] !== undefined && parts[1]) cfg.adCard.body = parts[1];
+            if (parts[2] !== undefined && parts[2]) cfg.adCard.url = parts[2];
+            cfg.adCard.enabled = true;
+            saveCmentionConfig(cfg);
+            return reply(
+                `✅ *Business Ad-Card Updated!*\n` +
+                `• *Title:* ${cfg.adCard.title || '_Auto_'}\n` +
+                `• *Body:* ${cfg.adCard.body || '_Auto_'}\n` +
+                `• *URL:* ${cfg.adCard.url || '_Auto_'}\n\n` +
+                `Test it with \`.me\`!`
+            );
+        }
+
+        case 'adthumb': {
+            if (!m.quoted || m.quoted.type !== 'imageMessage') {
+                return reply('❌ Please reply to an *image* with `.cmention adthumb` to set the Business Ad-Card thumbnail.');
+            }
+            try {
+                const downloaded = await m.quoted.download();
+                const dest = path.join(ASSETS_DIR, 'thumb.jpg');
+                fs.copyFileSync(downloaded, dest);
+                try { fs.unlinkSync(downloaded); } catch (_) {}
+                return reply('✅ Business Ad-Card thumbnail updated! Test it with `.me`.');
+            } catch (err) {
+                return reply('❌ Failed to save Ad-Card thumbnail.');
+            }
+        }
+
         case 'del':
         case 'delete':
             if (deleteMentionReply()) {
@@ -570,7 +686,12 @@ cmd({
     filename: __filename
 }, async (conn, mek, m, { botNumber, botLid }) => {
     try {
-        const mentionedJids = mek.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const msgBody = mek.message || {};
+        const mentionedJids = msgBody.extendedTextMessage?.contextInfo?.mentionedJid
+            || msgBody.imageMessage?.contextInfo?.mentionedJid
+            || msgBody.videoMessage?.contextInfo?.mentionedJid
+            || msgBody.documentMessage?.contextInfo?.mentionedJid
+            || [];
         if (!Array.isArray(mentionedJids) || mentionedJids.length === 0) return;
 
         const cleanBotNumber = botNumber || (conn.user?.id ? conn.user.id.split(':')[0].split('@')[0] : '');
