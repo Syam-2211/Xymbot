@@ -28,14 +28,48 @@ async function addExif(webpBuffer, packname, author) {
     return modifiedBuffer;
 }
 
-let handler = async (m, { conn, args, reply }) => {
+let handler = async (m, { conn, args, command, reply }) => {
+    const { getUserPack, setUserPack, deleteUserPack } = require('../lib/stickerPrefs');
+    const cmdName = (command || '').toLowerCase();
+
+    if (cmdName === 'setpack') {
+        const text = args.join(' ').trim();
+        if (!text) {
+            return reply('❌ Usage: `.setpack Pack Name | Author Name`\nExample: `.setpack My Stickers | Syam`');
+        }
+        let packname = text;
+        let author = '';
+        if (text.includes('|')) {
+            const parts = text.split('|');
+            packname = parts[0].trim();
+            author = parts.slice(1).join('|').trim();
+        }
+        if (!packname) return reply('❌ Pack name cannot be empty.');
+        setUserPack(m.senderNumber || m.sender, packname, author);
+        return reply(`✅ Personal sticker pack saved!\n📦 *Pack:* ${packname}\n✍️ *Author:* ${author || '_None_'}\n\nBoth \`.s\` and \`.take\` will now use this automatically.`);
+    }
+
+    if (cmdName === 'delpack') {
+        const removed = deleteUserPack(m.senderNumber || m.sender);
+        return reply(removed ? '🗑️ Personal sticker pack reset to bot defaults.' : 'ℹ️ You do not have a custom sticker pack saved.');
+    }
+
+    if (cmdName === 'mypack') {
+        const saved = getUserPack(m.senderNumber || m.sender);
+        if (!saved) {
+            return reply(`📦 *Current Sticker Pack (Default):*\n• *Pack:* ${global.packname || 'SYAM STICKERS'}\n• *Author:* ${global.author || 'SYAM'}\n\nSet yours with \`.setpack Pack | Author\``);
+        }
+        return reply(`📦 *Your Saved Sticker Pack:*\n• *Pack:* ${saved.packname}\n• *Author:* ${saved.author || '_None_'}\n\nReset with \`.delpack\``);
+    }
+
     if (!m.quoted || (m.quoted.type !== 'stickerMessage' && m.quoted.type !== 'audioMessage')) {
         return reply('❌ Please reply to a sticker or an audio file to steal it!');
     }
 
-    // Default pack and author
-    let packname = global.packname || '✪⃝⸸ꜛꪶ͢𝐒𝐘͔𝐀𝐌 𝐒𝐄𝐑͢ꫂꜜ™';
-    let author = global.author || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
+    // Default pack and author (user saved preference -> global defaults)
+    const savedPack = getUserPack(m.senderNumber || m.sender);
+    let packname = savedPack?.packname || global.packname || '✪⃝⸸ꜛꪶ͢𝐒𝐘͔𝐀𝐌 𝐒𝐄𝐑͢ꫂꜜ™';
+    let author = (savedPack && savedPack.author !== undefined) ? savedPack.author : (global.author || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓');
 
     if (args.length > 0) {
         let text = args.join(' ');
@@ -85,8 +119,8 @@ let handler = async (m, { conn, args, reply }) => {
     }
 };
 
-handler.help = ['take <name> | <author>'];
+handler.help = ['take <name> | <author>', 'setpack <name> | <author>', 'mypack', 'delpack'];
 handler.tags = ['fun'];
-handler.command = /^(take)$/i;
+handler.command = /^(take|setpack|delpack|mypack)$/i;
 
 module.exports = handler;

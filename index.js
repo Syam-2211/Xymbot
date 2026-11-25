@@ -53,6 +53,8 @@ process.on('unhandledRejection', (reason) => {
 });
 
 require('./config');
+const { loadGroupSettings, saveGroupSettings, getChatSettings } = require('./lib/groupDb');
+loadGroupSettings();
 
 // Message retry counter cache — required for Baileys to decrypt incoming messages
 const msgRetryCounterCache = new NodeCache();
@@ -431,7 +433,27 @@ async function startBot() {
     // ─── ANTI-BAN SAFE OUTGOING QUEUE & HUMAN EMULATION ─────────────────────────
     const sendQueue = [];
     let isProcessingQueue = false;
+    const botSentIds = new Set();
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    function trackBotSentId(id) {
+        if (!id) return;
+        botSentIds.add(id);
+        if (botSentIds.size > 1000) {
+            const firstId = botSentIds.values().next().value;
+            botSentIds.delete(firstId);
+        }
+    }
+
+    if (typeof conn.relayMessage === 'function') {
+        const originalRelayMessage = conn.relayMessage.bind(conn);
+        conn.relayMessage = async (jid, message, options = {}) => {
+            if (options?.messageId) trackBotSentId(options.messageId);
+            const res = await originalRelayMessage(jid, message, options);
+            if (typeof res === 'string') trackBotSentId(res);
+            return res;
+        };
+    }
 
     const originalSendMessage = conn.sendMessage.bind(conn);
     conn.sendMessage = async (jid, content, options = {}) => {
@@ -477,7 +499,7 @@ async function startBot() {
             try {
                 const { jid, content, options, resolve } = item;
 
-                if (jid && !jid.includes('status@broadcast')) {
+                if (jid && !jid.includes('status@broadcast') && !jid.endsWith('@newsletter')) {
                     const isAudio = content?.audio || content?.ptt;
                     const presenceType = isAudio ? 'recording' : 'composing';
                     await conn.sendPresenceUpdate(presenceType, jid).catch(() => { });
@@ -487,6 +509,10 @@ async function startBot() {
                 }
 
                 const result = await originalSendMessage(jid, content, options);
+
+                if (result?.key?.id) {
+                    trackBotSentId(result.key.id);
+                }
 
                 if (result?.key?.id && result?.message) {
                     messageCache.set(result.key.id, result.message);
@@ -500,7 +526,7 @@ async function startBot() {
                     }
                 }
 
-                if (jid && !jid.includes('status@broadcast')) {
+                if (jid && !jid.includes('status@broadcast') && !jid.endsWith('@newsletter')) {
                     conn.sendPresenceUpdate('paused', jid).catch(() => { });
                 }
 
@@ -600,6 +626,8 @@ async function startBot() {
                         const botJid = conn.user?.id ? (conn.user.id.split(':')[0] + '@s.whatsapp.net') : conn.user?.jid;
                         if (botJid) {
                             const configMod = require('./config');
+const { loadGroupSettings, saveGroupSettings, getChatSettings } = require('./lib/groupDb');
+loadGroupSettings();
                             const prefix = (typeof configMod?.getPrefix === 'function' ? configMod.getPrefix() : '.') || '.';
                             const botName = global.botName || '🕊🦋⃝♥⃝ѕиєнα🍁♥⃝🦋⃝🕊';
                             const ownerName = global.ownerName || '🤍⃞𝄟ꪶ𝐒͢ʏ᪳ᴀ͓ᴍ͎ ͢𝐒ᴇ͓ꪳʀ͎𖦻⃞🍓';
@@ -802,7 +830,40 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
             if (!m || !m.message) continue;
             if (m.key.remoteJid === 'status@broadcast') continue;
 
-            if (m.key.fromMe && m.key.remoteJid?.endsWith('@lid')) continue;
+            // Ignore messages sent by the bot itself to prevent self-reply loops,
+            // while allowing the paired user to run commands in DMs, @lid chats, groups, and channels.
+            if (m.key.id && botSentIds.has(m.key.id)) continue;
+
+            // ─── ANTI-DELETE (GROUP) ────────────────────────────────────────────
+            const protoMsg = m.message?.protocolMessage;
+            if (protoMsg && protoMsg.type === 0 && protoMsg.key?.id && m.key.remoteJid?.endsWith('@g.us')) {
+                const groupChat = getChatSettings(m.key.remoteJid);
+                if (groupChat.antidelete && !botSentIds.has(protoMsg.key.id)) {
+                    const cached = messageCache.get(protoMsg.key.id);
+                    if (cached) {
+                        const deletedText = cached.conversation
+                            || cached.extendedTextMessage?.text
+                            || cached.imageMessage?.caption
+                            || cached.videoMessage?.caption
+                            || cached.documentMessage?.caption
+                            || '';
+                        const deleter = m.key.participant || m.key.remoteJid;
+                        const deleterNum = deleter.split('@')[0].split(':')[0];
+                        if (deletedText) {
+                            await conn.sendMessage(m.key.remoteJid, {
+                                text: `🗑️ *ANTI-DELETE RECOVERED*\n👤 *Deleted by:* @${deleterNum}\n💬 *Message:* ${deletedText}`,
+                                mentions: [deleter]
+                            }).catch(() => { });
+                        } else {
+                            await conn.sendMessage(m.key.remoteJid, {
+                                text: `🗑️ *ANTI-DELETE:* @${deleterNum} deleted a media/sticker message.`,
+                                mentions: [deleter]
+                            }).catch(() => { });
+                        }
+                    }
+                }
+                continue;
+            }
 
             let message = m.message;
             while (
@@ -827,6 +888,8 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
 
             m.chat = m.key.remoteJid;
             m.isGroup = m.chat.endsWith('@g.us');
+            m.isChannel = m.chat.endsWith('@newsletter');
+            m.isDM = !m.isGroup && !m.isChannel;
             m.sender = m.key.fromMe
                 ? (conn.user.id || conn.user.jid)
                 : (m.key.participant || m.key.remoteJid);
@@ -834,7 +897,7 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
             m.pushName = m.pushName || 'User';
 
             m.reply = (text) => {
-                const opts = !m.key.fromMe ? { quoted: m } : {};
+                const opts = (!m.key.fromMe && !m.isChannel) ? { quoted: m } : {};
                 return conn.sendMessage(m.chat, { text: String(text) }, opts);
             };
 
@@ -906,9 +969,12 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
             const normalizeJid = (jid) => jid ? jid.split(':')[0].split('@')[0] + '@s.whatsapp.net' : jid;
             const botJid = normalizeJid(conn.user.id);
             const botNumber = conn.user.id ? conn.user.id.split(':')[0].split('@')[0] : '';
+            const botLidNumber = conn.user?.lid ? conn.user.lid.split(':')[0].split('@')[0] : '';
 
             const isFromMe = m.key.fromMe === true;
-            const isPairedUser = m.senderNumber === botNumber || normalizeJid(m.sender) === botJid;
+            const isPairedUser = m.senderNumber === botNumber
+                || (botLidNumber && m.senderNumber === botLidNumber)
+                || normalizeJid(m.sender) === botJid;
             const isConfigOwner = Array.isArray(global.owner) && global.owner.includes(m.senderNumber);
             const isOwner = isFromMe || isPairedUser || isConfigOwner;
 
@@ -947,7 +1013,7 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
             let groupMetadata = null, groupName = '', participants = [],
                 groupAdmins = [], isBotAdmins = false, isAdmins = isOwner;
 
-            if (m.isGroup && (isCmd || isOwner)) {
+            if (m.isGroup && (isCmd || isOwner || getChatSettings(from).antilink)) {
                 try {
                     groupMetadata = await conn.groupMetadata(from);
                     groupName = groupMetadata?.subject || '';
@@ -961,15 +1027,62 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                 }
             }
 
+            // ─── ANTI-LINK ENFORCEMENT (GROUP) ──────────────────────────────────
+            if (m.isGroup && !isAdmins && !isOwner && !m.key.fromMe && body) {
+                const groupChat = getChatSettings(from);
+                if (groupChat.antilink) {
+                    const linkRegex = /(https?:\/\/[^\s]+|chat\.whatsapp\.com\/[A-Za-z0-9]+|wa\.me\/[^\s]+)/i;
+                    if (linkRegex.test(body)) {
+                        if (isBotAdmins) {
+                            await conn.sendMessage(from, { delete: m.key }).catch(() => { });
+                        }
+                        const action = groupChat.antilinkAction || 'warn';
+                        if (action === 'kick' && isBotAdmins) {
+                            await conn.sendMessage(from, {
+                                text: `🚫 *Anti-Link:* @${m.senderNumber} removed for sending links.`,
+                                mentions: [m.sender]
+                            }).catch(() => { });
+                            await conn.groupParticipantsUpdate(from, [m.sender], 'remove').catch(() => { });
+                        } else if (action === 'warn') {
+                            if (!groupChat.warns) groupChat.warns = {};
+                            groupChat.warns[m.senderNumber] = (groupChat.warns[m.senderNumber] || 0) + 1;
+                            const count = groupChat.warns[m.senderNumber];
+                            saveGroupSettings();
+                            if (count >= 3 && isBotAdmins) {
+                                groupChat.warns[m.senderNumber] = 0;
+                                saveGroupSettings();
+                                await conn.sendMessage(from, {
+                                    text: `🚫 *Anti-Link (3/3):* @${m.senderNumber} kicked for repeated links.`,
+                                    mentions: [m.sender]
+                                }).catch(() => { });
+                                await conn.groupParticipantsUpdate(from, [m.sender], 'remove').catch(() => { });
+                            } else {
+                                await conn.sendMessage(from, {
+                                    text: `⚠️ *Anti-Link Warning (${count}/3):* @${m.senderNumber}, links are not allowed here.`,
+                                    mentions: [m.sender]
+                                }).catch(() => { });
+                            }
+                        } else {
+                            await conn.sendMessage(from, {
+                                text: `🔗 *Anti-Link:* @${m.senderNumber}, links are not allowed here.`,
+                                mentions: [m.sender]
+                            }).catch(() => { });
+                        }
+                        continue;
+                    }
+                }
+            }
+
             const reply = async (text) => {
                 const textStr = String(text);
-                const res = await conn.sendMessage(from, { text: textStr }, { quoted: m });
+                const replyOpts = !m.isChannel ? { quoted: m } : {};
+                const res = await conn.sendMessage(from, { text: textStr }, replyOpts);
                 if (textStr.toLowerCase().includes('error')) {
                     try {
                         const fs = require('fs');
                         const path = require('path');
                         const errorAudio = fs.readFileSync(path.join(__dirname, 'assets/audio/error.mp3'));
-                        await conn.sendMessage(from, { audio: errorAudio, mimetype: 'audio/mpeg', ptt: false, id3Tagged: true }, { quoted: m });
+                        await conn.sendMessage(from, { audio: errorAudio, mimetype: 'audio/mpeg', ptt: false, id3Tagged: true }, replyOpts);
                     } catch (e) {
                         console.error('Failed to send error audio:', e);
                     }
@@ -1006,6 +1119,9 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                                 isAdmin: isAdmins,
                                 isBotAdmin: isBotAdmins,
                                 isROwner: isOwner,
+                                isGroup: m.isGroup,
+                                isChannel: m.isChannel,
+                                isDM: m.isDM,
                                 from,
                                 reply
                             });
@@ -1074,6 +1190,8 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                             args,
                             q,
                             isGroup,
+                            isChannel: m.isChannel,
+                            isDM: m.isDM,
                             sender,
                             senderNumber,
                             botNumber2: botNumber,

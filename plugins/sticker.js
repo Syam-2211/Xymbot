@@ -352,8 +352,11 @@ cmd({
         }
 
         // Optional custom packname | author via command text: `.s Pack | Author`
-        let packname = global.packname || 'SYAM STICKERS';
-        let author = global.author || 'SYAM';
+        // Falls back to user's saved .setpack preference, then global defaults
+        const { getUserPack } = require('../lib/stickerPrefs');
+        const savedPack = getUserPack(m.senderNumber || m.sender);
+        let packname = savedPack?.packname || global.packname || 'SYAM STICKERS';
+        let author = (savedPack && savedPack.author !== undefined) ? savedPack.author : (global.author || 'SYAM');
         if (q && q.trim()) {
             if (q.includes('|')) {
                 const parts = q.split('|');
@@ -421,10 +424,10 @@ cmd({
         if (mediaPath) {
             try {
                 await fs.promises.unlink(mediaPath);
-            } catch (_) {}
+            } catch (_) { }
         }
         try {
             await fs.promises.rm(tempDir, { recursive: true, force: true });
-        } catch (_) {}
+        } catch (_) { }
     }
 });
