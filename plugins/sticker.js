@@ -39,7 +39,11 @@ let settings = {};
 try {
     settings = require('../settings');
 } catch (_) {
-    settings = {};
+    try {
+        settings = require('../config');
+    } catch (__) {
+        settings = {};
+    }
 }
 
 const MAX_STICKER_BYTES = 900 * 1024;
@@ -52,6 +56,9 @@ const AUDIO_EXTS = new Set(['mp3', 'ogg', 'opus', 'wav', 'm4a', 'aac', 'flac', '
 
 const audioStickerPatchKey = Symbol.for('donixbot.audioStickerProtoPatch');
 const audioStickerMessagePatchKey = Symbol.for('donixbot.audioStickerMessageProtoPatch');
+
+// Tracks active sticker menu prompts per chat+user so re-running .s replaces old prompts cleanly
+const activeStickerMenus = new Map();
 
 const stickerProfiles = [
     { duration: 5, fps: 15, quality: 60 },
@@ -78,7 +85,7 @@ function encodeBytesField(fieldNumber, value) {
     ]);
 }
 
-// Patch WAProto once for native audio stickers (StickerMessage field 26 + Message field 134)
+// Patch WAProto once for native WhatsApp audio stickers (StickerMessage field 26 + Message field 134)
 if (proto?.Message?.StickerMessage && !proto.Message.StickerMessage[audioStickerPatchKey]) {
     const originalStickerEncode = proto.Message.StickerMessage.encode;
     const originalStickerFromObject = proto.Message.StickerMessage.fromObject;
@@ -124,6 +131,7 @@ if (proto?.Message && !proto.Message[audioStickerMessagePatchKey]) {
         );
         const outputWriter = writer || originalMessageEncode.call(this, {}, undefined);
 
+        // Keep stickerMessage visible to Baileys' relay code so it sets mediatype="sticker"
         outputWriter.uint32((134 << 3) | 2).bytes(futureProofMessage);
 
         const remainingMessage = { ...message };
@@ -139,7 +147,7 @@ if (proto?.Message && !proto.Message[audioStickerMessagePatchKey]) {
 
 function unwrapMessage(message) {
     let content = message;
-    for (let i = 0; i < 5 && content; i++) {
+    for (let i = 0; i < 6 && content; i++) {
         if (content.ephemeralMessage?.message) content = content.ephemeralMessage.message;
         else if (content.viewOnceMessage?.message) content = content.viewOnceMessage.message;
         else if (content.viewOnceMessageV2?.message) content = content.viewOnceMessageV2.message;
@@ -194,7 +202,7 @@ function classifyMedia(preferredType, rawMsgObj) {
 
 function extractTargetMedia(mek, m) {
     const directMsg = unwrapMessage(m.message || mek.message);
-    const directMedia = classifyMedia(m.type || m.mtype, directMsg);
+    const directMedia = classifyMedia(m.type, directMsg);
     if (directMedia) {
         return {
             isDirect: true,
@@ -210,7 +218,7 @@ function extractTargetMedia(mek, m) {
 
     if (rawQuoted) {
         const unwrappedQuoted = unwrapMessage(rawQuoted);
-        const quotedMedia = classifyMedia(m.quoted?.type || m.quoted?.mtype, unwrappedQuoted);
+        const quotedMedia = classifyMedia(m.quoted?.type, unwrappedQuoted);
         if (quotedMedia) {
             return {
                 isDirect: false,
@@ -544,12 +552,22 @@ function waitForStickerMenuReply(conn, from, senderJid, menuMsgId, isOwnerSender
         if (!conn?.ev?.on) return resolve(null);
 
         const expectedUser = normalizeJidUser(senderJid);
+        const stateKey = `${from}:${expectedUser}`;
+
+        // Cancel any previous pending menu from the same user in the same chat
+        if (activeStickerMenus.has(stateKey)) {
+            activeStickerMenus.get(stateKey).cancel();
+        }
+
         let settled = false;
 
         const cleanup = () => {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
+            if (activeStickerMenus.get(stateKey)?.cleanup === cleanup) {
+                activeStickerMenus.delete(stateKey);
+            }
             if (typeof conn.ev.off === 'function') {
                 conn.ev.off('messages.upsert', onUpsert);
             } else if (typeof conn.ev.removeListener === 'function') {
@@ -557,19 +575,22 @@ function waitForStickerMenuReply(conn, from, senderJid, menuMsgId, isOwnerSender
             }
         };
 
-        const timer = setTimeout(() => {
+        const cancel = () => {
             cleanup();
             resolve(null);
-        }, timeoutMs);
+        };
 
-        const onUpsert = ({ messages }) => {
-            if (!Array.isArray(messages)) return;
+        const timer = setTimeout(cancel, timeoutMs);
+        activeStickerMenus.set(stateKey, { cleanup, cancel });
+
+        const onUpsert = ({ type, messages }) => {
+            if (type === 'append' || !Array.isArray(messages)) return;
             for (const msg of messages) {
                 if (!msg?.message) continue;
                 if (menuMsgId && msg.key?.id === menuMsgId) continue;
                 if (msg.key?.remoteJid !== from) continue;
 
-                // Allow owner's own reply if owner triggered the menu; otherwise ignore bot's own outgoing messages
+                // Allow owner's own reply when owner ran .s; otherwise ignore bot's outgoing messages
                 if (msg.key?.fromMe && !isOwnerSender) continue;
 
                 const incomingSender = msg.key?.fromMe
@@ -579,11 +600,21 @@ function waitForStickerMenuReply(conn, from, senderJid, menuMsgId, isOwnerSender
                 if (expectedUser && normalizeJidUser(incomingSender) !== expectedUser) continue;
 
                 const text = extractIncomingText(msg.message).toLowerCase();
-                if (text === '1' || text === '1.' || text.includes('audio-sticker') || text.includes('audio sticker')) {
+                if (
+                    text === '1'
+                    || text === '1.'
+                    || text === 'audio-sticker'
+                    || text === 'audio sticker'
+                ) {
                     cleanup();
                     return resolve({ choice: '1', replyMsg: msg });
                 }
-                if (text === '2' || text === '2.' || text.includes('normal-sticker') || text.includes('normal sticker')) {
+                if (
+                    text === '2'
+                    || text === '2.'
+                    || text === 'normal-sticker'
+                    || text === 'normal sticker'
+                ) {
                     cleanup();
                     return resolve({ choice: '2', replyMsg: msg });
                 }
@@ -601,11 +632,11 @@ cmd({
     category: 'converters',
     react: '🎨',
     filename: __filename
-}, async (conn, mek, m, { from, reply, q, command }) => {
-    const sendText = (text, quoted = mek) =>
-        typeof reply === 'function' && quoted === mek
-            ? reply(text)
-            : conn.sendMessage(from, { text }, { quoted });
+}, async (conn, mek, m, { from, reply, q, command, isChannel }) => {
+    const sendText = (text, quoted = mek) => {
+        const opts = !isChannel && quoted ? { quoted } : {};
+        return conn.sendMessage(from, { text }, opts);
+    };
 
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sticker-'));
     let downloadedFile = null;
@@ -654,10 +685,7 @@ cmd({
         }
 
         const mediaPath = path.join(tempDir, 'source-media');
-        if (typeof m.download === 'function' && target.isDirect) {
-            const buf = await m.download();
-            await fs.promises.writeFile(mediaPath, buf);
-        } else if (typeof m.quoted?.download === 'function' && !target.isDirect) {
+        if (typeof m.quoted?.download === 'function' && !target.isDirect) {
             const res = await m.quoted.download();
             if (Buffer.isBuffer(res)) {
                 await fs.promises.writeFile(mediaPath, res);
@@ -689,9 +717,9 @@ cmd({
                 '🎨 *STICKER MENU*\n\n' +
                 '1. audio-sticker🔊\n' +
                 '2. normal-sticker🎁\n\n' +
-                '_Reply with *1* or *2* (expires in 60s)_';
+                '_Reply with *1* or *2* (60s)_';
 
-            const sentMenu = await conn.sendMessage(from, { text: menuText }, { quoted: mek });
+            const sentMenu = await sendText(menuText, mek);
 
             const menuReply = await waitForStickerMenuReply(
                 conn,
@@ -703,7 +731,7 @@ cmd({
             );
 
             if (!menuReply) {
-                return sendText('⌛ Sticker menu timed out. Send `.s` again and reply with *1* or *2*.', mek);
+                return;
             }
             selectedChoice = menuReply.choice;
             replyAnchor = menuReply.replyMsg || mek;
@@ -741,10 +769,16 @@ cmd({
             emojis: ['🎁']
         });
 
-        await conn.sendMessage(from, { sticker: stickerBuffer }, { quoted: replyAnchor });
+        await conn.sendMessage(
+            from,
+            { sticker: stickerBuffer },
+            !isChannel ? { quoted: replyAnchor } : {}
+        );
     } catch (error) {
         console.error('[STICKER ERROR]', error);
-        return sendText('❌ Sticker Error: ' + error.message);
+        return typeof reply === 'function'
+            ? reply('❌ Sticker Error: ' + error.message)
+            : sendText('❌ Sticker Error: ' + error.message);
     } finally {
         if (downloadedFile) {
             try {
@@ -756,3 +790,4 @@ cmd({
         } catch (_) { }
     }
 });
+ 
