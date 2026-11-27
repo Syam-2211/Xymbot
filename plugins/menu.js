@@ -877,41 +877,55 @@ const resolveMethod = (overrideArg) => {
 // ═══════════════════════════════════════════════════════════════════════════
 cmd({
     pattern: 'menu',
-    alias: ['help', 'list', 'allmenu', 'fullmenu', 'commands'],
+    alias: ['start', 'help', 'list', 'commands'],
     react: '🦅',
-    desc: 'Show dynamic menu with 9 rotating bot styles & 3 sending methods',
+    desc: 'Show interactive category menu or .menu <category>',
     category: 'main',
     filename: __filename
 },
 async (conn, mek, m, { from, pushname, args, reply }) => {
     const rawArg = args[0] ? args.join(' ').toLowerCase().trim() : '';
-
-    // Check if user specifically requested a method or a style
-    const isMethodArg = ['button', 'list', 'action', 'card', 'text', 'doc', 'image'].includes(rawArg);
-    const isStyleArg = STYLES_ORDER.includes(rawArg) || ['anita', 'queenanita', 'velyn'].includes(rawArg);
-
-    const chosenStyle = resolveStyle(isStyleArg ? rawArg : null);
-    const chosenMethod = isMethodArg ? resolveMethod(rawArg) : resolveMethod(null);
-
     const meta = getMeta(pushname);
-    const generator = STYLE_GENERATORS[chosenStyle] || generateHydroMenu;
-    const textMenu = generator(meta);
 
-    console.log(`📋 [MENU DISPATCH] Style: ${chosenStyle} | Method: ${chosenMethod} | User: ${pushname}`);
+    // 1. Check if user requested a specific category: e.g. .menu download, .menu ai, .menu group
+    const matchedSection = COMMAND_SECTIONS.find(
+        s => s.key.toLowerCase() === rawArg || s.name.toLowerCase().includes(rawArg)
+    );
+    if (rawArg && matchedSection) {
+        const catText = generateCategoryMenu('hydro', matchedSection.key, meta);
+        return await sendTextMenu(conn, from, mek, catText);
+    }
 
-    if (chosenMethod === 'button') {
-        const btnOk = await sendButtonMenu(conn, from, mek, meta, chosenStyle);
-        if (!btnOk) {
-            const cardOk = await sendCardMenu(conn, from, mek, textMenu, meta, chosenStyle);
-            if (!cardOk) await sendTextMenu(conn, from, mek, textMenu);
-        }
-    } else if (chosenMethod === 'card') {
-        const cardOk = await sendCardMenu(conn, from, mek, textMenu, meta, chosenStyle);
+    // 2. Check if user specifically requested text/card/button mode
+    const textMenu = generateHydroMenu(meta);
+    if (rawArg === 'text') {
+        return await sendTextMenu(conn, from, mek, textMenu);
+    }
+    if (rawArg === 'card') {
+        const cardOk = await sendCardMenu(conn, from, mek, textMenu, meta, 'xymbot');
         if (!cardOk) await sendTextMenu(conn, from, mek, textMenu);
-    } else {
-        // 'text' / 'texted' method (Image banner + full text + audio)
+        return;
+    }
+
+    // 3. Default Renzona-style: Interactive Category List with plain-text fallback
+    const btnOk = await sendButtonMenu(conn, from, mek, meta, 'xymbot');
+    if (!btnOk) {
         await sendTextMenu(conn, from, mek, textMenu);
     }
+});
+
+cmd({
+    pattern: 'allmenu',
+    alias: ['menuall', 'fullmenu'],
+    react: '📋',
+    desc: 'Show all commands across every category in one message',
+    category: 'main',
+    filename: __filename
+},
+async (conn, mek, m, { from, pushname }) => {
+    const meta = getMeta(pushname);
+    const textMenu = generateHydroMenu(meta);
+    await sendTextMenu(conn, from, mek, textMenu);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
