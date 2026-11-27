@@ -1074,11 +1074,13 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
 
             console.log(`📩 [INCOMING] From: ${m.senderNumber || m.chat} | Text: "${body}" | isCmd: ${isCmd} | command: "${command}" | isOwner: ${isOwner}`);
 
-            if (global.WORKTYPE === 'private' && !isOwner && isCmd) {
+            const isEveryPublic = Array.isArray(global.everyCmds) && global.everyCmds.includes((command || '').toLowerCase());
+
+            if (global.WORKTYPE === 'private' && !isOwner && !isEveryPublic && isCmd) {
                 if (isCmd && command) console.log(`🔒 Command '${command}' ignored: Bot is in PRIVATE mode.`);
                 continue;
             }
-            if (global.WORKTYPE === 'sudo' && !isOwner && !isSudo && isCmd) {
+            if (global.WORKTYPE === 'sudo' && !isOwner && !isSudo && !isEveryPublic && isCmd) {
                 if (isCmd && command) console.log(`👑 Command '${command}' ignored: Bot is in SUDO mode.`);
                 continue;
             }

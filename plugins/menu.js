@@ -196,15 +196,17 @@ const COMMAND_SECTIONS = [
             { cmd: 'setowner',      args: '<number>',         desc: 'Change owner number' },
             { cmd: 'mode',          args: 'public/private',   desc: 'Switch bot access mode' },
             { cmd: 'sudo',          args: 'add/del/list',     desc: 'Manage sudo operators' },
+            { cmd: 'every',         args: 'add/del/list',     desc: 'Public cmds in private/sudo' },
+            { cmd: 'cmdaudio',      args: 'on/off/list',      desc: 'Enable/disable cmd audio' },
+            { cmd: 'setcmdaudio',   args: '<cmd>',            desc: 'Attach voice note to cmd' },
+            { cmd: 'delcmdaudio',   args: '<cmd>',            desc: 'Delete cmd voice note' },
             { cmd: 'join',          args: '<link>',           desc: 'Join group via invite' },
             { cmd: 'leave',         args: '',                 desc: 'Exit current group' },
             { cmd: 'broadcast',     args: '<msg>',            desc: 'Send blast to all chats' },
             { cmd: 'block',         args: '@user',            desc: 'Block user from bot' },
             { cmd: 'unblock',       args: '@user',            desc: 'Unblock user' },
             { cmd: 'blockchat',     args: '',                 desc: 'Mute bot in this chat' },
-            { cmd: 'restart',       args: '',                 desc: 'Reboot bot process' },
-            { cmd: 'setcmdaudio',   args: '<cmd>',            desc: 'Attach voice note to cmd' },
-            { cmd: 'delcmdaudio',   args: '<cmd>',            desc: 'Delete cmd voice note' }
+            { cmd: 'restart',       args: '',                 desc: 'Reboot bot process' }
         ]
     }
 ];
@@ -441,10 +443,27 @@ async (conn, mek, m, { from, pushname, args, reply }) => {
         }
     }
 
-    // Default: interactive single_select, fallback to full text
-    const ok = await sendInteractiveMenu(conn, from, mek, meta);
-    if (!ok) {
-        const fullText = buildFullMenu(meta);
+    // Default: creative Renzona box-drawing menu with externalAdReply card, fallback to plain text
+    const fullText = buildFullMenu(meta);
+    try {
+        const imgPath = path.join(__dirname, '../media/menu.jpg');
+        let thumbBuffer = null;
+        try { if (fs.existsSync(imgPath)) thumbBuffer = fs.readFileSync(imgPath); } catch (_) {}
+
+        const contextInfo = {
+            externalAdReply: {
+                title: `✨ ${meta.botName} ✨`,
+                body: `${meta.packname} • ${meta.alias}`,
+                thumbnail: thumbBuffer,
+                thumbnailUrl: 'https://files.catbox.moe/dphztt.jpeg',
+                renderLargerThumbnail: true,
+                mediaType: 1,
+                sourceUrl: `https://wa.me/${(global.owner?.[0] || '919947121619')}`
+            }
+        };
+        await conn.sendMessage(from, { text: fullText, contextInfo }, { quoted: mek });
+        await sendMenuAudio(conn, from, mek);
+    } catch (_) {
         await conn.sendMessage(from, { text: fullText }, { quoted: mek });
         await sendMenuAudio(conn, from, mek);
     }

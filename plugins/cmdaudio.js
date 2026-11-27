@@ -109,3 +109,50 @@ async (conn, mek, m, { from, q, reply, isOwner }) => {
         reply(`🚫 No custom audio found for command: *${cmdName}*`);
     }
 });
+
+if (typeof global.cmdAudioEnabled === 'undefined') global.cmdAudioEnabled = true;
+if (!Array.isArray(global.cmdAudioDisabled)) global.cmdAudioDisabled = [];
+
+cmd({
+    pattern: "cmdaudio",
+    react: "🔊",
+    desc: "Enable, disable, or list custom command audios.",
+    category: "owner",
+    use: ".cmdaudio <on|off|list|enable <cmd>|disable <cmd>>",
+    filename: __filename
+},
+async (conn, mek, m, { args, reply, isOwner }) => {
+    if (!isOwner) return reply("🚫 This command is for the owner only.");
+
+    const action = (args[0] || 'list').toLowerCase();
+    const target = (args[1] || '').replace(/^\./, '').toLowerCase().trim();
+
+    if (action === 'on' || action === 'enable') {
+        if (!target) {
+            global.cmdAudioEnabled = true;
+            return reply("🔊 Custom command audios are now *ENABLED* globally.");
+        }
+        global.cmdAudioDisabled = global.cmdAudioDisabled.filter(c => c !== target);
+        return reply(`🔊 Enabled custom audio for command: *${target}*`);
+    }
+
+    if (action === 'off' || action === 'disable') {
+        if (!target) {
+            global.cmdAudioEnabled = false;
+            return reply("🔇 Custom command audios are now *DISABLED* globally.");
+        }
+        if (!global.cmdAudioDisabled.includes(target)) global.cmdAudioDisabled.push(target);
+        return reply(`🔇 Disabled custom audio for command: *${target}*`);
+    }
+
+    const keys = Object.keys(global.cmdAudio || {});
+    if (!keys.length) {
+        return reply("🎵 No custom command audios are set.\nUse `.setcmdaudio <cmd>` (replying to audio) to add one.");
+    }
+    const list = keys.map((k, i) => {
+        const disabled = global.cmdAudioDisabled.includes(k);
+        return `${i + 1}. *.${k}* — ${disabled ? '🔇 Disabled' : '🔊 Enabled'}`;
+    }).join('\n');
+
+    return reply(`🎵 *CUSTOM COMMAND AUDIOS*\nGlobal: *${global.cmdAudioEnabled ? 'ON 🔊' : 'OFF 🔇'}*\n\n${list}\n\n*Usage:*\n• \`.cmdaudio on/off\`\n• \`.cmdaudio enable/disable <cmd>\`\n• \`.setcmdaudio <cmd>\``);
+});
