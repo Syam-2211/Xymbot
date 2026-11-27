@@ -725,37 +725,44 @@ const sendButtonMenu = async (conn, from, mek, meta, currentStyleName) => {
     const listFooter = `${meta.packname} • ${meta.alias}`;
 
     try {
-        await conn.sendMessage(from, {
-            listMessage: {
-                title: listTitle,
-                description: listBody,
-                footerText: listFooter,
-                buttonText: '📋 Browse Menu',
-                listType: 0,
-                sections
+        const rows = sections.flatMap(sec =>
+            sec.rows.map(r => ({
+                header: sec.title,
+                title: r.title,
+                description: r.description,
+                id: r.id
+            }))
+        );
+
+        const interactiveMsg = {
+            viewOnceMessage: {
+                message: {
+                    interactiveMessage: {
+                        body: { text: listBody },
+                        footer: { text: listFooter },
+                        header: { title: listTitle, hasMediaAttachment: false },
+                        nativeFlowMessage: {
+                            buttons: [
+                                {
+                                    name: 'single_select',
+                                    buttonParamsJson: JSON.stringify({
+                                        title: '📋 Browse Menu',
+                                        sections: [{ title: '📂 Categories', rows }]
+                                    })
+                                }
+                            ]
+                        }
+                    }
+                }
             }
-        }, opts);
+        };
+
+        await conn.relayMessage(from, interactiveMsg, {});
         await sendMenuAudio(conn, from, mek);
         return true;
     } catch (err) {
-        console.warn('Button/List menu failed, trying without quoted:', err.message);
-        try {
-            await conn.sendMessage(from, {
-                listMessage: {
-                    title: listTitle,
-                    description: listBody,
-                    footerText: listFooter,
-                    buttonText: '📋 Browse Menu',
-                    listType: 0,
-                    sections
-                }
-            });
-            await sendMenuAudio(conn, from, mek);
-            return true;
-        } catch (err2) {
-            console.error('Button menu error, falling back to card/text:', err2.message);
-            return false;
-        }
+        console.warn('Interactive button menu not supported, falling back to text menu:', err.message);
+        return false;
     }
 };
 
