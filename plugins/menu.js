@@ -1,5 +1,23 @@
 const { cmd } = require('../command');
 const { runtime } = require('../lib/functions');
+
+// Baileys generateWAMessageFromContent — imported lazily so we don't crash if unavailable
+let _generateWAMessageFromContent = null;
+let _generateMessageID = null;
+async function getBaileysHelpers() {
+    if (_generateWAMessageFromContent) return;
+    try {
+        const baileys = require('@whiskeysockets/baileys');
+        _generateWAMessageFromContent = baileys.generateWAMessageFromContent;
+        _generateMessageID = baileys.generateMessageID || baileys.generateMessageIDV2 || (() => require('crypto').randomBytes(16).toString('hex').toUpperCase());
+    } catch (e) {
+        try {
+            const baileys = await import('@whiskeysockets/baileys');
+            _generateWAMessageFromContent = baileys.generateWAMessageFromContent;
+            _generateMessageID = baileys.generateMessageID || baileys.generateMessageIDV2 || (() => require('crypto').randomBytes(16).toString('hex').toUpperCase());
+        } catch (_) {}
+    }
+}
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -300,8 +318,14 @@ const sendMenuAudio = async (conn, from, mek) => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  INTERACTIVE CATEGORY SELECTOR (nativeFlowMessage / single_select)
+//  Strategy 1: generateWAMessageFromContent (Baileys v7 canonical)
+//  Strategy 2: direct interactiveMessage via relayMessage (no viewOnce wrap)
+//  Strategy 3: card with externalAdReply thumbnail
+//  Strategy 4: plain text
 // ═══════════════════════════════════════════════════════════════════════════
 const sendInteractiveMenu = async (conn, from, mek, meta) => {
+    await getBaileysHelpers();
+
     const rows = COMMAND_SECTIONS.map(sec => ({
         header: `${sec.emoji} ${sec.name}`,
         title:  `${sec.emoji} ${sec.name}`,
@@ -320,35 +344,72 @@ const sendInteractiveMenu = async (conn, from, mek, meta) => {
     const footerText = `${meta.packname} • ${meta.alias}`;
     const headerTitle = `✨ ${meta.botName} ✨`;
 
-    const interactiveMsg = {
-        viewOnceMessage: {
-            message: {
-                interactiveMessage: {
-                    body:   { text: bodyText },
-                    footer: { text: footerText },
-                    header: { title: headerTitle, hasMediaAttachment: false },
-                    nativeFlowMessage: {
-                        buttons: [
-                            {
-                                name: 'single_select',
-                                buttonParamsJson: JSON.stringify({
-                                    title: '📋 Browse Categories',
-                                    sections: [{ title: '📂 All Categories', rows }]
-                                })
-                            }
-                        ]
-                    }
-                }
-            }
+    const buttonParamsJson = JSON.stringify({
+        title: '📋 Browse Categories',
+        sections: [{ title: '📂 All Categories', rows }]
+    });
+
+    const interactiveContent = {
+        interactiveMessage: {
+            body:   { text: bodyText },
+            footer: { text: footerText },
+            header: { title: headerTitle, hasMediaAttachment: false },
+            nativeFlowMessage: {
+                buttons: [{ name: 'single_select', buttonParamsJson }],
+                messageParamsJson: ''
+            },
+            contextInfo: mek ? { stanzaId: mek.key?.id, participant: mek.key?.participant || mek.key?.remoteJid, quotedMessage: mek.message } : {}
         }
     };
 
+    // Strategy 1 — generateWAMessageFromContent (proper Baileys v7 path)
+    if (_generateWAMessageFromContent) {
+        try {
+            const msgId = _generateMessageID ? _generateMessageID() : require('crypto').randomBytes(16).toString('hex').toUpperCase();
+            const waMsg = _generateWAMessageFromContent(from, interactiveContent, {
+                userJid: conn.user?.id || conn.user?.jid,
+                quoted: mek
+            });
+            await conn.relayMessage(from, waMsg.message, { messageId: waMsg.key?.id || msgId });
+            await sendMenuAudio(conn, from, mek);
+            return true;
+        } catch (e1) {
+            console.warn('[Menu] Strategy 1 (generateWAMessageFromContent) failed:', e1.message);
+        }
+    }
+
+    // Strategy 2 — direct relayMessage with interactiveMessage (no viewOnce wrapper)
     try {
-        await conn.relayMessage(from, interactiveMsg, {});
+        await conn.relayMessage(from, interactiveContent, {});
         await sendMenuAudio(conn, from, mek);
         return true;
-    } catch (err) {
-        console.warn('Interactive menu failed, falling back to text:', err.message);
+    } catch (e2) {
+        console.warn('[Menu] Strategy 2 (relayMessage direct) failed:', e2.message);
+    }
+
+    // Strategy 3 — card with externalAdReply (always works, looks great)
+    try {
+        const imgPath = require('path').join(__dirname, '../media/menu.jpg');
+        let thumbBuffer = null;
+        try { if (require('fs').existsSync(imgPath)) thumbBuffer = require('fs').readFileSync(imgPath); } catch (_) {}
+
+        const contextInfo = {
+            externalAdReply: {
+                title: `✨ ${meta.botName} ✨`,
+                body: `${meta.packname} • ${meta.alias}`,
+                thumbnail: thumbBuffer,
+                thumbnailUrl: 'https://files.catbox.moe/dphztt.jpeg',
+                renderLargerThumbnail: true,
+                mediaType: 1,
+                sourceUrl: `https://wa.me/${(global.owner?.[0] || '919947121619')}`
+            }
+        };
+        const opts = mek ? { quoted: mek } : {};
+        await conn.sendMessage(from, { text: bodyText, contextInfo }, opts);
+        await sendMenuAudio(conn, from, mek);
+        return true;
+    } catch (e3) {
+        console.warn('[Menu] Strategy 3 (card fallback) failed:', e3.message);
         return false;
     }
 };
