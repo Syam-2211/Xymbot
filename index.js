@@ -542,10 +542,30 @@ async function startBot() {
 
     // ─── MEDIA DOWNLOAD HELPER ─────────────────────────────────────────────────
     conn.downloadAndSaveMediaMessage = async (msgObj) => {
-        const rawMsg = msgObj.message || msgObj;
+        let rawMsg = msgObj.message || msgObj;
+        // Unwrap ViewOnce, Ephemeral, DocumentWithCaption wrappers
+        while (
+            rawMsg?.ephemeralMessage ||
+            rawMsg?.viewOnceMessage ||
+            rawMsg?.viewOnceMessageV2 ||
+            rawMsg?.viewOnceMessageV2Extension ||
+            rawMsg?.documentWithCaptionMessage
+        ) {
+            rawMsg = rawMsg.ephemeralMessage?.message
+                || rawMsg.viewOnceMessage?.message
+                || rawMsg.viewOnceMessageV2?.message
+                || rawMsg.viewOnceMessageV2Extension?.message
+                || rawMsg.documentWithCaptionMessage?.message
+                || rawMsg;
+        }
+
         const msgType = Object.keys(rawMsg).find(k =>
-            !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)
+            ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(k)
         );
+        if (!msgType) {
+            throw new Error(`Unsupported or missing media in message: ${Object.keys(rawMsg).join(', ')}`);
+        }
+
         const mimetype = (rawMsg[msgType]?.mimetype || '').toLowerCase();
         const fileName = rawMsg[msgType]?.fileName || '';
         const mimeExtMap = {
@@ -913,11 +933,43 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                 || message?.stickerMessage?.contextInfo;
 
             if (ctxInfo?.quotedMessage) {
-                const qType = Object.keys(ctxInfo.quotedMessage)
-                    .find(k => !['messageContextInfo'].includes(k));
+                let quotedRaw = ctxInfo.quotedMessage;
+                const isViewOnce = Boolean(
+                    quotedRaw.viewOnceMessage ||
+                    quotedRaw.viewOnceMessageV2 ||
+                    quotedRaw.viewOnceMessageV2Extension
+                );
+
+                // Unwrap any wrappers (viewOnce, ephemeral, etc.) to get the actual media message
+                while (
+                    quotedRaw?.ephemeralMessage ||
+                    quotedRaw?.viewOnceMessage ||
+                    quotedRaw?.viewOnceMessageV2 ||
+                    quotedRaw?.viewOnceMessageV2Extension ||
+                    quotedRaw?.documentWithCaptionMessage
+                ) {
+                    quotedRaw = quotedRaw.ephemeralMessage?.message
+                        || quotedRaw.viewOnceMessage?.message
+                        || quotedRaw.viewOnceMessageV2?.message
+                        || quotedRaw.viewOnceMessageV2Extension?.message
+                        || quotedRaw.documentWithCaptionMessage?.message
+                        || quotedRaw;
+                }
+
+                const qType = Object.keys(quotedRaw)
+                    .find(k => !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k)) || Object.keys(ctxInfo.quotedMessage)[0];
+
+                const qText = quotedRaw?.extendedTextMessage?.text
+                    || quotedRaw?.conversation
+                    || quotedRaw[qType]?.caption
+                    || '';
+
                 m.quoted = {
                     type: qType,
-                    message: ctxInfo.quotedMessage,
+                    message: quotedRaw,
+                    rawMessage: ctxInfo.quotedMessage,
+                    isViewOnce: isViewOnce || Boolean(quotedRaw[qType]?.viewOnce),
+                    text: qText,
                     key: {
                         id: ctxInfo.stanzaId,
                         remoteJid: m.chat,
@@ -927,7 +979,7 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                 };
                 m.quoted.download = () => conn.downloadAndSaveMediaMessage({
                     key: m.quoted.key,
-                    message: ctxInfo.quotedMessage
+                    message: quotedRaw
                 });
             } else {
                 m.quoted = null;

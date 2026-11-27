@@ -6,37 +6,20 @@ const VV_WRAPPERS = [
     "viewOnceMessage",
     "viewOnceMessageV2",
     "viewOnceMessageV2Extension",
+    "documentWithCaptionMessage",
+    "ephemeralMessage"
 ];
-const MEDIA_TYPES = ["imageMessage", "videoMessage", "audioMessage"];
+const MEDIA_TYPES = ["imageMessage", "videoMessage", "audioMessage", "documentMessage"];
 const TEXT_TYPES = ["extendedTextMessage", "conversation"];
 
-// returns a clean (non view once) copy of a view once message, or null. covers the wrapped
-function extractViewOnce(message) {
-    if (!message) return null;
-    const root = message.ephemeralMessage?.message || message;
-    const wrapperKey = VV_WRAPPERS.find((key) => root && root[key]);
-    const inner = wrapperKey ? root[wrapperKey].message : root;
-    if (!inner) return null;
-
-    const type = [...MEDIA_TYPES, ...TEXT_TYPES].find((t) => inner[t]);
-    if (!type) return null;
-    if (typeof inner[type] === "string") {
-        return wrapperKey ? { type, isText: true, text: inner[type], message: { [type]: inner[type] } } : null;
+function unwrapViewOnce(msg) {
+    if (!msg) return null;
+    let curr = msg;
+    while (curr && VV_WRAPPERS.some(k => curr[k])) {
+        const key = VV_WRAPPERS.find(k => curr[k]);
+        curr = curr[key]?.message || curr[key];
     }
-    if (!wrapperKey && !inner[type]?.viewOnce) return null;
-
-    const node = { ...inner[type] };
-    delete node.viewOnce;
-    const isText = TEXT_TYPES.includes(type);
-    return { type, isText, text: isText ? node.text || "" : undefined, message: { ...inner, [type]: node } };
-}
-
-// whether the copy is usable: text present, or media that can still be downloaded
-function hasViewOnceContent(vv) {
-    if (!vv) return false;
-    if (vv.isText) return Boolean(vv.text);
-    const node = vv.message?.[vv.type];
-    return Boolean(node && (node.mediaKey || node.url || node.directPath));
+    return curr;
 }
 
 cmd({
@@ -54,41 +37,50 @@ async (conn, mek, m, { from, quoted, reply }) => {
         }
 
         const botName = global.botName || 'XYMBOT';
-        const rawQuoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        const extracted = extractViewOnce(rawQuoted);
+        const rawQuoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage || m.quoted.rawMessage || m.quoted.message;
+        const inner = unwrapViewOnce(rawQuoted) || m.quoted.message;
+
+        const mediaType = Object.keys(inner || {}).find(k => MEDIA_TYPES.includes(k)) || m.quoted.type;
+        const textContent = inner?.extendedTextMessage?.text || inner?.conversation || m.quoted.text;
 
         // If it's a text-only view once
-        if (extracted && extracted.isText) {
-            return reply(`🔓 *[VIEW ONCE RECOVERED]*\n\n${extracted.text}`);
+        if (textContent && !MEDIA_TYPES.includes(mediaType)) {
+            return reply(`🔓 *[VIEW ONCE RECOVERED]*\n\n${textContent}\n\n> Powered by ${botName}`);
         }
 
-        // Reply status
         reply("🔓 *Decrypting View Once media...*");
 
         let mediaPath;
         try {
             mediaPath = await m.quoted.download();
         } catch (downloadErr) {
-            console.error("ViewOnce direct download failed, trying raw download:", downloadErr.message);
+            console.error("ViewOnce m.quoted.download failed, attempting direct unwrap download:", downloadErr.message);
+            try {
+                mediaPath = await conn.downloadAndSaveMediaMessage({
+                    key: m.quoted.key,
+                    message: inner
+                });
+            } catch (err2) {
+                console.error("ViewOnce direct download also failed:", err2.message);
+            }
         }
-
-        const quotedType = extracted?.type || m.quoted.type;
 
         if (mediaPath && fs.existsSync(mediaPath)) {
             const buffer = fs.readFileSync(mediaPath);
-            const caption = `🔓 *VIEW ONCE RECOVERED*\n> Powered by ${botName}`;
+            const originalCaption = inner?.[mediaType]?.caption || '';
+            const caption = (originalCaption ? `${originalCaption}\n\n` : '') + `🔓 *VIEW ONCE RECOVERED*\n> Powered by ${botName}`;
 
-            if (quotedType === 'imageMessage' || quotedType === 'viewOnceMessageV2') {
+            if (mediaType === 'imageMessage' || mediaPath.endsWith('.jpg') || mediaPath.endsWith('.png')) {
                 await conn.sendMessage(from, {
                     image: buffer,
                     caption: caption
                 }, { quoted: mek });
-            } else if (quotedType === 'videoMessage') {
+            } else if (mediaType === 'videoMessage' || mediaPath.endsWith('.mp4')) {
                 await conn.sendMessage(from, {
                     video: buffer,
                     caption: caption
                 }, { quoted: mek });
-            } else if (quotedType === 'audioMessage') {
+            } else if (mediaType === 'audioMessage' || mediaPath.endsWith('.ogg') || mediaPath.endsWith('.mp3')) {
                 await conn.sendMessage(from, {
                     audio: buffer,
                     mimetype: 'audio/mp4',
@@ -97,16 +89,15 @@ async (conn, mek, m, { from, quoted, reply }) => {
             } else {
                 await conn.sendMessage(from, {
                     document: buffer,
-                    mimetype: "application/octet-stream",
-                    fileName: "recovered_media",
+                    mimetype: inner?.[mediaType]?.mimetype || "application/octet-stream",
+                    fileName: inner?.[mediaType]?.fileName || "recovered_media",
                     caption: caption
                 }, { quoted: mek });
             }
 
             try { fs.unlinkSync(mediaPath); } catch (_) {}
         } else {
-            // If download failed or already opened
-            reply("❌ Error: Could not retrieve media. The View Once media might have already expired or been opened on WhatsApp servers.");
+            reply("❌ Error: Could not retrieve media. The View Once media may have already expired or been opened on WhatsApp servers.");
         }
 
     } catch (e) {
@@ -116,6 +107,5 @@ async (conn, mek, m, { from, quoted, reply }) => {
 });
 
 module.exports = {
-    extractViewOnce,
-    hasViewOnceContent
+    unwrapViewOnce
 };
