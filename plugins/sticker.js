@@ -554,7 +554,6 @@ function waitForStickerMenuReply(conn, from, senderJid, menuMsgId, isOwnerSender
         const expectedUser = normalizeJidUser(senderJid);
         const stateKey = `${from}:${expectedUser}`;
 
-        // Cancel any previous pending menu from the same user in the same chat
         if (activeStickerMenus.has(stateKey)) {
             activeStickerMenus.get(stateKey).cancel();
         }
@@ -589,15 +588,19 @@ function waitForStickerMenuReply(conn, from, senderJid, menuMsgId, isOwnerSender
                 if (!msg?.message) continue;
                 if (menuMsgId && msg.key?.id === menuMsgId) continue;
                 if (msg.key?.remoteJid !== from) continue;
-
-                // Allow owner's own reply when owner ran .s; otherwise ignore bot's outgoing messages
                 if (msg.key?.fromMe && !isOwnerSender) continue;
+
+                const unwrapped = unwrapMessage(msg.message);
+                const quotedStanzaId = unwrapped?.extendedTextMessage?.contextInfo?.stanzaId;
+                const isDirectReplyToMenu = Boolean(menuMsgId && quotedStanzaId === menuMsgId);
 
                 const incomingSender = msg.key?.fromMe
                     ? (conn.user?.id || senderJid)
                     : (msg.key?.participant || msg.key?.remoteJid);
 
-                if (expectedUser && normalizeJidUser(incomingSender) !== expectedUser) continue;
+                if (!isDirectReplyToMenu && expectedUser && normalizeJidUser(incomingSender) !== expectedUser) {
+                    continue;
+                }
 
                 const text = extractIncomingText(msg.message).toLowerCase();
                 if (
@@ -790,4 +793,5 @@ cmd({
         } catch (_) { }
     }
 });
- 
+
+console.log('🎨 [Plugin] sticker.js loaded successfully!');
