@@ -169,3 +169,63 @@ cmd({
     config.updateSettings({ owner: [num] });
     reply(`✅ Owner number updated to: *${num}*`);
 });
+
+// ══════════════════════════════════════════════════════════════
+// .setfooter — Customize menu & bot footer
+// ══════════════════════════════════════════════════════════════
+cmd({
+    pattern: "setfooter",
+    desc: "Change bot menu footer text",
+    category: "owner",
+    filename: __filename
+}, async (conn, mek, m, { q, isOwner, reply }) => {
+    if (!isOwner) return reply('❌ Only owner can use this command.');
+    if (!q) return reply('Provide a new footer text!');
+    global.menuFooter = q;
+    reply(`✅ Menu footer updated to: *${q}*`);
+});
+
+// ══════════════════════════════════════════════════════════════
+// .setpackname — Customize sticker packname
+// ══════════════════════════════════════════════════════════════
+cmd({
+    pattern: "setpackname",
+    desc: "Change sticker packname",
+    category: "owner",
+    filename: __filename
+}, async (conn, mek, m, { q, isOwner, reply }) => {
+    if (!isOwner) return reply('❌ Only owner can use this command.');
+    if (!q) return reply('Provide a new packname!');
+    global.packname = q;
+    reply(`✅ Sticker packname updated to: *${q}*`);
+});
+
+// ══════════════════════════════════════════════════════════════
+// .setauthor — Customize sticker author
+// ══════════════════════════════════════════════════════════════
+cmd({
+    pattern: "setauthor",
+    desc: "Change sticker author name",
+    category: "owner",
+    filename: __filename
+}, async (conn, mek, m, { q, isOwner, reply }) => {
+    if (!isOwner) return reply('❌ Only owner can use this command.');
+    if (!q) return reply('Provide a new author name!');
+    global.author = q;
+    reply(`✅ Sticker author updated to: *${q}*`);
+});
+
+// ══════════════════════════════════════════════════════════════
+// .setalive — Customize alive message
+// ══════════════════════════════════════════════════════════════
+cmd({
+    pattern: "setalive",
+    desc: "Change .alive custom message",
+    category: "owner",
+    filename: __filename
+}, async (conn, mek, m, { q, isOwner, reply }) => {
+    if (!isOwner) return reply('❌ Only owner can use this command.');
+    if (!q) return reply('Provide a new alive message!');
+    global.aliveMsg = q;
+    reply(`✅ Alive message updated to:\n${q}`);
+});
