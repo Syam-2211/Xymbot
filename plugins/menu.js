@@ -720,19 +720,16 @@ const sendButtonMenu = async (conn, from, mek, meta, currentStyleName) => {
         }
     ];
 
-    const listTitle = `✨ ${meta.botName} [${currentStyleName.toUpperCase()}] ✨`;
-    const listBody  = `👑 ${meta.owner}\n${meta.signature}\n\nTap the button below to browse all categories 👇`;
-    const listFooter = `${meta.packname} • ${meta.alias}`;
+    const listTitle = `╭────────────────────────────╮\n│      ⚡ ${toBoldSerif(meta.botName.toUpperCase())} MENU      │\n╰────────────────────────────╯`;
+    const listBody = `👤 *USER INFO*\n• Name : ${meta.pushname || 'User'}\n• Role : ${meta.isOwner ? '👑 Owner' : '👤 User'}\n\n🤖 *BOT INFO*\n• Name : ${meta.botName}\n• Owner : ${meta.owner}\n• Prefix : ${meta.prefix}\n• Commands : ${meta.totalCmds || commands.length}\n• Mode : ${global.mode || 'public'}\n• Runtime : ${meta.runtime}\n\n⚡ Select a menu from the button below 👇 (or type ${meta.prefix}allmenu)`;
+    const listFooter = `> Powered by ${meta.botName} • ${meta.owner}`;
 
     try {
-        const rows = sections.flatMap(sec =>
-            sec.rows.map(r => ({
-                header: sec.title,
-                title: r.title,
-                description: r.description,
-                id: r.id
-            }))
-        );
+        const rows = COMMAND_SECTIONS.map(sec => ({
+            title: `${sec.emoji} ${toBoldItalicSerif(sec.name.toUpperCase())}`,
+            description: `${sec.commands.length} commands • open menu`,
+            id: `${meta.prefix}menu ${sec.key}`
+        }));
 
         const interactiveMsg = {
             viewOnceMessage: {
@@ -743,11 +740,25 @@ const sendButtonMenu = async (conn, from, mek, meta, currentStyleName) => {
                         header: { title: listTitle, hasMediaAttachment: false },
                         nativeFlowMessage: {
                             buttons: [
+                                ...(meta.ownerNumber ? [{
+                                    name: 'cta_url',
+                                    buttonParamsJson: JSON.stringify({
+                                        display_text: '📱 Chat Owner',
+                                        url: `https://wa.me/${String(meta.ownerNumber).replace(/\D/g, '')}`
+                                    })
+                                }] : []),
+                                {
+                                    name: 'quick_reply',
+                                    buttonParamsJson: JSON.stringify({
+                                        display_text: '📋 All Menu',
+                                        id: `${meta.prefix}allmenu`
+                                    })
+                                },
                                 {
                                     name: 'single_select',
                                     buttonParamsJson: JSON.stringify({
-                                        title: '📋 Browse Menu',
-                                        sections: [{ title: '📂 Categories', rows }]
+                                        title: '📖 Select Menu',
+                                        sections: [{ title: `${meta.botName} Categories`, rows }]
                                     })
                                 }
                             ]
@@ -1041,7 +1052,7 @@ async (conn, mek, m, { q, reply, isOwner }) => {
         return reply(`❌ Invalid method! Available:\n${available.join(', ')}`);
     }
 });
-
+11
 module.exports = {
     generateHydroMenu,
     generateNanoMenu,
