@@ -7,14 +7,16 @@ const path = require('path');
 
 async function getAudioApi(url) {
     const apis = [
-        `https://api.nexray.web.id/downloader/ytmp3?url=${encodeURIComponent(url)}`,
+        `https://api.vreden.web.id/api/ytmp3?url=${encodeURIComponent(url)}`,
+        `https://api.davidcyriltech.my.id/download/ytmp3?url=${encodeURIComponent(url)}`,
         `https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(url)}`,
+        `https://api.nexray.web.id/downloader/ytmp3?url=${encodeURIComponent(url)}`,
         `https://api.giftedtech.my.id/api/download/dlmp3?apikey=gifted&url=${encodeURIComponent(url)}`
     ];
     for (const api of apis) {
         try {
             const { data } = await axios.get(api, { timeout: 15000 });
-            const dl = data?.result?.url || data?.result?.download_url || data?.data?.download || data?.result?.download;
+            const dl = data?.result?.download?.url || data?.result?.downloadUrl || data?.result?.url || data?.result?.download_url || data?.data?.download || data?.data?.dl || data?.result?.download;
             if (dl) return dl;
         } catch (_) {}
     }

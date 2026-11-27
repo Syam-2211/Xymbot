@@ -62,6 +62,19 @@ async (conn, mek, m, { from, quoted, reply }) => {
                 });
             } catch (err2) {
                 console.error("ViewOnce direct download also failed:", err2.message);
+                // Attempt 3: Try to find original message from message cache / store if stanzaId is present
+                const stanzaId = mek.message?.extendedTextMessage?.contextInfo?.stanzaId;
+                if (stanzaId && global.messageCache && global.messageCache.has(stanzaId)) {
+                    try {
+                        const cached = global.messageCache.get(stanzaId);
+                        mediaPath = await conn.downloadAndSaveMediaMessage({
+                            key: m.quoted.key,
+                            message: cached
+                        });
+                    } catch (cacheErr) {
+                        console.error("ViewOnce cache download failed:", cacheErr.message);
+                    }
+                }
             }
         }
 

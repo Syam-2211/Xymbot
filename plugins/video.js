@@ -7,14 +7,16 @@ const path = require('path');
 
 async function getVideoApi(url) {
     const apis = [
-        `https://api.nexray.web.id/downloader/ytmp4?url=${encodeURIComponent(url)}`,
+        `https://api.vreden.web.id/api/ytmp4?url=${encodeURIComponent(url)}`,
+        `https://api.davidcyriltech.my.id/download/ytmp4?url=${encodeURIComponent(url)}`,
         `https://api.siputzx.my.id/api/d/ytmp4?url=${encodeURIComponent(url)}`,
+        `https://api.nexray.web.id/downloader/ytmp4?url=${encodeURIComponent(url)}`,
         `https://api.giftedtech.my.id/api/download/dlmp4?apikey=gifted&url=${encodeURIComponent(url)}`
     ];
     for (const api of apis) {
         try {
             const { data } = await axios.get(api, { timeout: 20000 });
-            const dl = data?.result?.url || data?.result?.download_url || data?.data?.download || data?.result?.download;
+            const dl = data?.result?.download?.url || data?.result?.downloadUrl || data?.result?.url || data?.result?.download_url || data?.data?.download || data?.data?.dl || data?.result?.download;
             if (dl) return dl;
         } catch (_) {}
     }

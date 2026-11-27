@@ -5,6 +5,7 @@ let makeWASocket,
     fetchLatestBaileysVersion,
     Browsers,
     downloadMediaMessage,
+    downloadContentFromMessage,
     getAggregateVotesInPollMessage,
     makeInMemoryStore;
 
@@ -26,6 +27,7 @@ async function initBaileys() {
     fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
     Browsers = baileys.Browsers;
     downloadMediaMessage = baileys.downloadMediaMessage;
+    downloadContentFromMessage = baileys.downloadContentFromMessage;
     getAggregateVotesInPollMessage = baileys.getAggregateVotesInPollMessage;
     makeInMemoryStore = baileys.makeInMemoryStore;
 }
@@ -64,6 +66,7 @@ const userCommandHistory = new Map();
 const spellingAudioCooldowns = new Map();
 // Manual message cache so Baileys can re-decrypt messages without makeInMemoryStore
 const messageCache = new Map();
+global.messageCache = messageCache;
 
 // ─── PERSISTENT POLL CREATION CACHE ─────────────────────────────────────────
 const pollCacheFile = path.join(__dirname, 'session/poll_cache.json');
@@ -598,12 +601,28 @@ async function startBot() {
                         : msgType === 'stickerMessage' ? 'webp'
                             : 'bin');
 
-        const buffer = await downloadMediaMessage(
-            { key: msgObj.key || {}, message: rawMsg },
-            'buffer',
-            {},
-            { logger: pino({ level: 'silent' }), reuploadRequest: conn.updateMediaMessage }
-        );
+        let buffer;
+        try {
+            buffer = await downloadMediaMessage(
+                { key: msgObj.key || {}, message: rawMsg },
+                'buffer',
+                {},
+                { logger: pino({ level: 'silent' }), reuploadRequest: conn.updateMediaMessage }
+            );
+        } catch (downloadErr) {
+            // Fallback: try downloadContentFromMessage directly on the media node
+            if (typeof downloadContentFromMessage === 'function' && rawMsg[msgType]) {
+                const streamType = msgType.replace('Message', '');
+                const stream = await downloadContentFromMessage(rawMsg[msgType], streamType);
+                const chunks = [];
+                for await (const chunk of stream) {
+                    chunks.push(chunk);
+                }
+                buffer = Buffer.concat(chunks);
+            } else {
+                throw downloadErr;
+            }
+        }
         if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp', { recursive: true });
         const filePath = `./tmp/${Date.now()}.${ext}`;
         fs.writeFileSync(filePath, buffer);
@@ -977,10 +996,13 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                         participant: ctxInfo.participant
                     }
                 };
-                m.quoted.download = () => conn.downloadAndSaveMediaMessage({
-                    key: m.quoted.key,
-                    message: quotedRaw
-                });
+                m.quoted.download = () => {
+                    const originalMsg = messageCache.get(ctxInfo.stanzaId);
+                    return conn.downloadAndSaveMediaMessage({
+                        key: m.quoted.key,
+                        message: originalMsg || quotedRaw
+                    });
+                };
             } else {
                 m.quoted = null;
             }
@@ -1225,7 +1247,9 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                     }
 
                     if (match) {
-                        console.log(`⚡ Executing cmd plugin: ${cmd.pattern}`);
+                        if (cmd.pattern) {
+                            console.log(`⚡ Executing cmd plugin: ${cmd.pattern}`);
+                        }
                         const sender = m.sender;
                         const senderNumber = m.senderNumber;
                         const pushname = m.pushName;
