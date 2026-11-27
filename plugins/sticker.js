@@ -1,12 +1,6 @@
 'use strict';
 
 const { cmd } = require('../command');
-const {
-    downloadMediaMessage,
-    prepareWAMessageMedia,
-    proto,
-    getContentType
-} = require('@whiskeysockets/baileys');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -23,7 +17,9 @@ try {
 let ffmpegPath = 'ffmpeg';
 try {
     const staticPath = require('ffmpeg-static');
-    if (staticPath) ffmpegPath = staticPath;
+    if (staticPath && fs.existsSync(staticPath)) {
+        ffmpegPath = staticPath;
+    }
 } catch (_) {
     ffmpegPath = 'ffmpeg';
 }
@@ -56,8 +52,6 @@ const AUDIO_EXTS = new Set(['mp3', 'ogg', 'opus', 'wav', 'm4a', 'aac', 'flac', '
 
 const audioStickerPatchKey = Symbol.for('donixbot.audioStickerProtoPatch');
 const audioStickerMessagePatchKey = Symbol.for('donixbot.audioStickerMessageProtoPatch');
-
-// Tracks active sticker menu prompts per chat+user so re-running .s replaces old prompts cleanly
 const activeStickerMenus = new Map();
 
 const stickerProfiles = [
@@ -85,65 +79,92 @@ function encodeBytesField(fieldNumber, value) {
     ]);
 }
 
-// Patch WAProto once for native WhatsApp audio stickers (StickerMessage field 26 + Message field 134)
-if (proto?.Message?.StickerMessage && !proto.Message.StickerMessage[audioStickerPatchKey]) {
-    const originalStickerEncode = proto.Message.StickerMessage.encode;
-    const originalStickerFromObject = proto.Message.StickerMessage.fromObject;
+// Load @whiskeysockets/baileys safely (supports both CommonJS and ESM Baileys v7+)
+let baileysCache = null;
+async function getBaileys() {
+    if (baileysCache) return baileysCache;
 
-    proto.Message.StickerMessage.encode = function (sticker, writer) {
-        const outputWriter = originalStickerEncode.call(this, sticker, writer);
-        if (sticker?.audioMessage) {
-            proto.Message.AudioMessage.encode(
-                sticker.audioMessage,
-                outputWriter.uint32((26 << 3) | 2).fork()
-            ).ldelim();
+    let mod;
+    try {
+        mod = require('@whiskeysockets/baileys');
+    } catch (e) {
+        if (e.code === 'ERR_REQUIRE_ESM') {
+            mod = await import('@whiskeysockets/baileys');
+        } else {
+            throw e;
         }
-        return outputWriter;
-    };
+    }
 
-    proto.Message.StickerMessage.fromObject = function (object) {
-        const sticker = originalStickerFromObject.call(this, object);
-        if (object?.audioMessage) {
-            sticker.audioMessage = proto.Message.AudioMessage.fromObject(object.audioMessage);
-        }
-        return sticker;
-    };
+    const proto = mod.proto || mod.default?.proto;
+    if (proto?.Message?.StickerMessage && !proto.Message.StickerMessage[audioStickerPatchKey]) {
+        const originalStickerEncode = proto.Message.StickerMessage.encode;
+        const originalStickerFromObject = proto.Message.StickerMessage.fromObject;
 
-    Object.defineProperty(proto.Message.StickerMessage, audioStickerPatchKey, {
-        value: true,
-        configurable: true
-    });
+        proto.Message.StickerMessage.encode = function (sticker, writer) {
+            const outputWriter = originalStickerEncode.call(this, sticker, writer);
+            if (sticker?.audioMessage) {
+                proto.Message.AudioMessage.encode(
+                    sticker.audioMessage,
+                    outputWriter.uint32((26 << 3) | 2).fork()
+                ).ldelim();
+            }
+            return outputWriter;
+        };
+
+        proto.Message.StickerMessage.fromObject = function (object) {
+            const sticker = originalStickerFromObject.call(this, object);
+            if (object?.audioMessage) {
+                sticker.audioMessage = proto.Message.AudioMessage.fromObject(object.audioMessage);
+            }
+            return sticker;
+        };
+
+        Object.defineProperty(proto.Message.StickerMessage, audioStickerPatchKey, {
+            value: true,
+            configurable: true
+        });
+    }
+
+    if (proto?.Message && !proto.Message[audioStickerMessagePatchKey]) {
+        const originalMessageEncode = proto.Message.encode;
+
+        proto.Message.encode = function (message, writer) {
+            const sticker = message?.stickerMessage;
+            if (!sticker?.audioMessage) {
+                return originalMessageEncode.call(this, message, writer);
+            }
+
+            const encodedSticker = proto.Message.StickerMessage.encode(sticker).finish();
+            const futureProofMessage = encodeBytesField(
+                1,
+                encodeBytesField(26, encodedSticker)
+            );
+            const outputWriter = writer || originalMessageEncode.call(this, {}, undefined);
+
+            outputWriter.uint32((134 << 3) | 2).bytes(futureProofMessage);
+
+            const remainingMessage = { ...message };
+            delete remainingMessage.stickerMessage;
+            return originalMessageEncode.call(this, remainingMessage, outputWriter);
+        };
+
+        Object.defineProperty(proto.Message, audioStickerMessagePatchKey, {
+            value: true,
+            configurable: true
+        });
+    }
+
+    baileysCache = {
+        downloadMediaMessage: mod.downloadMediaMessage || mod.default?.downloadMediaMessage,
+        prepareWAMessageMedia: mod.prepareWAMessageMedia || mod.default?.prepareWAMessageMedia,
+        getContentType: mod.getContentType || mod.default?.getContentType,
+        proto
+    };
+    return baileysCache;
 }
 
-if (proto?.Message && !proto.Message[audioStickerMessagePatchKey]) {
-    const originalMessageEncode = proto.Message.encode;
-
-    proto.Message.encode = function (message, writer) {
-        const sticker = message?.stickerMessage;
-        if (!sticker?.audioMessage) {
-            return originalMessageEncode.call(this, message, writer);
-        }
-
-        const encodedSticker = proto.Message.StickerMessage.encode(sticker).finish();
-        const futureProofMessage = encodeBytesField(
-            1,
-            encodeBytesField(26, encodedSticker)
-        );
-        const outputWriter = writer || originalMessageEncode.call(this, {}, undefined);
-
-        // Keep stickerMessage visible to Baileys' relay code so it sets mediatype="sticker"
-        outputWriter.uint32((134 << 3) | 2).bytes(futureProofMessage);
-
-        const remainingMessage = { ...message };
-        delete remainingMessage.stickerMessage;
-        return originalMessageEncode.call(this, remainingMessage, outputWriter);
-    };
-
-    Object.defineProperty(proto.Message, audioStickerMessagePatchKey, {
-        value: true,
-        configurable: true
-    });
-}
+// Pre-warm Baileys in the background right after plugin loads
+getBaileys().catch((err) => console.warn('[STICKER] Baileys pre-warm warning:', err.message));
 
 function unwrapMessage(message) {
     let content = message;
@@ -158,19 +179,19 @@ function unwrapMessage(message) {
     return content || {};
 }
 
-function resolveMessageType(preferredType, msgObj) {
+function resolveMessageType(preferredType, msgObj, getContentTypeFn) {
     if (preferredType && msgObj?.[preferredType]) return preferredType;
-    if (typeof getContentType === 'function') {
-        const detected = getContentType(msgObj);
+    if (typeof getContentTypeFn === 'function') {
+        const detected = getContentTypeFn(msgObj);
         if (detected && msgObj?.[detected]) return detected;
     }
     const ignored = new Set(['senderKeyDistributionMessage', 'messageContextInfo']);
     return Object.keys(msgObj || {}).find((k) => !ignored.has(k)) || null;
 }
 
-function classifyMedia(preferredType, rawMsgObj) {
+function classifyMedia(preferredType, rawMsgObj, getContentTypeFn) {
     const msgObj = unwrapMessage(rawMsgObj);
-    const msgType = resolveMessageType(preferredType, msgObj);
+    const msgType = resolveMessageType(preferredType, msgObj, getContentTypeFn);
     if (!msgType || !msgObj[msgType]) return null;
 
     const content = msgObj[msgType] || {};
@@ -200,9 +221,9 @@ function classifyMedia(preferredType, rawMsgObj) {
     return null;
 }
 
-function extractTargetMedia(mek, m) {
+function extractTargetMedia(mek, m, getContentTypeFn) {
     const directMsg = unwrapMessage(m.message || mek.message);
-    const directMedia = classifyMedia(m.type, directMsg);
+    const directMedia = classifyMedia(m.type, directMsg, getContentTypeFn);
     if (directMedia) {
         return {
             isDirect: true,
@@ -218,7 +239,7 @@ function extractTargetMedia(mek, m) {
 
     if (rawQuoted) {
         const unwrappedQuoted = unwrapMessage(rawQuoted);
-        const quotedMedia = classifyMedia(m.quoted?.type, unwrappedQuoted);
+        const quotedMedia = classifyMedia(m.quoted?.type, unwrappedQuoted, getContentTypeFn);
         if (quotedMedia) {
             return {
                 isDirect: false,
@@ -462,7 +483,7 @@ async function addStickerMetadata(stickerBuffer, { packname, author, emojis = ['
     }
 }
 
-async function sendNativeAudioSticker(conn, from, mediaPath, targetKind, tempDir, packOpts) {
+async function sendNativeAudioSticker(conn, from, mediaPath, targetKind, tempDir, packOpts, prepareWAMessageMedia) {
     const audioPath = path.join(tempDir, 'sticker-audio.ogg');
     const waveformPath = path.join(tempDir, 'sticker-audio.pcm');
 
@@ -470,7 +491,15 @@ async function sendNativeAudioSticker(conn, from, mediaPath, targetKind, tempDir
         ? await createAudioVisualizerSticker(mediaPath, path.join(tempDir, 'audio-vis.webp'), 5)
         : await createAdaptiveVideoSticker(mediaPath, tempDir);
 
-    await createAudioTrack(mediaPath, audioPath, profile.duration);
+    try {
+        await createAudioTrack(mediaPath, audioPath, profile.duration);
+    } catch (err) {
+        if (targetKind === 'video' && /matches no streams|does not contain any stream/i.test(err.message)) {
+            return { fallbackToNormal: true };
+        }
+        throw err;
+    }
+
     const audioBuffer = fs.readFileSync(audioPath);
     if (!audioBuffer.length) {
         throw new Error('FFmpeg produced an empty audio track.');
@@ -530,6 +559,7 @@ async function sendNativeAudioSticker(conn, from, mediaPath, targetKind, tempDir
     sticker.audioMessage = audio;
 
     await conn.relayMessage(from, { stickerMessage: sticker }, {});
+    return { fallbackToNormal: false };
 }
 
 function normalizeJidUser(jid) {
@@ -551,6 +581,7 @@ function waitForStickerMenuReply(conn, from, senderJid, menuMsgId, isOwnerSender
     return new Promise((resolve) => {
         if (!conn?.ev?.on) return resolve(null);
 
+        const isGroupChat = String(from).endsWith('@g.us');
         const expectedUser = normalizeJidUser(senderJid);
         const stateKey = `${from}:${expectedUser}`;
 
@@ -588,18 +619,17 @@ function waitForStickerMenuReply(conn, from, senderJid, menuMsgId, isOwnerSender
                 if (!msg?.message) continue;
                 if (menuMsgId && msg.key?.id === menuMsgId) continue;
                 if (msg.key?.remoteJid !== from) continue;
-                if (msg.key?.fromMe && !isOwnerSender) continue;
 
                 const unwrapped = unwrapMessage(msg.message);
                 const quotedStanzaId = unwrapped?.extendedTextMessage?.contextInfo?.stanzaId;
                 const isDirectReplyToMenu = Boolean(menuMsgId && quotedStanzaId === menuMsgId);
 
-                const incomingSender = msg.key?.fromMe
-                    ? (conn.user?.id || senderJid)
-                    : (msg.key?.participant || msg.key?.remoteJid);
-
-                if (!isDirectReplyToMenu && expectedUser && normalizeJidUser(incomingSender) !== expectedUser) {
-                    continue;
+                if (isGroupChat && !isDirectReplyToMenu) {
+                    if (msg.key?.fromMe && !isOwnerSender) continue;
+                    const incomingSender = msg.key?.fromMe
+                        ? (conn.user?.id || senderJid)
+                        : (msg.key?.participant || msg.key?.remoteJid);
+                    if (expectedUser && normalizeJidUser(incomingSender) !== expectedUser) continue;
                 }
 
                 const text = extractIncomingText(msg.message).toLowerCase();
@@ -645,7 +675,13 @@ cmd({
     let downloadedFile = null;
 
     try {
-        const target = extractTargetMedia(mek, m);
+        const {
+            downloadMediaMessage,
+            prepareWAMessageMedia,
+            getContentType
+        } = await getBaileys();
+
+        const target = extractTargetMedia(mek, m, getContentType);
         if (!target) {
             return sendText('❌ Send or reply to an *image, video, GIF, audio/voice note, or sticker* with `.s`');
         }
@@ -743,14 +779,22 @@ cmd({
         if (selectedChoice === '1') {
             if (target.kind === 'video' || target.kind === 'audio') {
                 await sendText('🔊 Creating your audio sticker…', replyAnchor);
-                await sendNativeAudioSticker(conn, from, mediaPath, target.kind, tempDir, {
-                    packname,
-                    author
-                });
-                return;
+                const result = await sendNativeAudioSticker(
+                    conn,
+                    from,
+                    mediaPath,
+                    target.kind,
+                    tempDir,
+                    { packname, author },
+                    prepareWAMessageMedia
+                );
+                if (!result?.fallbackToNormal) {
+                    return;
+                }
+                await sendText('⚠️ This video has no audio track — sending normal animated sticker instead…', replyAnchor);
+            } else {
+                await sendText('⚠️ Images/GIFs have no audio track — creating a normal sticker instead…', replyAnchor);
             }
-
-            await sendText('⚠️ Images/GIFs have no audio track — creating a normal sticker instead…', replyAnchor);
             selectedChoice = '2';
         }
 
@@ -795,3 +839,4 @@ cmd({
 });
 
 console.log('🎨 [Plugin] sticker.js loaded successfully!');
+ 
