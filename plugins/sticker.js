@@ -1,11 +1,24 @@
 'use strict';
 
 const { cmd } = require('../command');
+const {
+    downloadMediaMessage,
+    prepareWAMessageMedia,
+    proto,
+    getContentType
+} = require('@whiskeysockets/baileys');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+
+let webp = null;
+try {
+    webp = require('node-webpmux');
+} catch (_) {
+    webp = null;
+}
 
 let ffmpegPath = 'ffmpeg';
 try {
@@ -22,20 +35,23 @@ try {
     sharp = null;
 }
 
-let webp = null;
+let settings = {};
 try {
-    webp = require('node-webpmux');
+    settings = require('../settings');
 } catch (_) {
-    webp = null;
+    settings = {};
 }
 
-const { prepareWAMessageMedia, proto } = require('@whiskeysockets/baileys');
-
 const MAX_STICKER_BYTES = 900 * 1024;
+const MAX_VIDEO_SECONDS = 6;
 const MENU_TIMEOUT_MS = 60 * 1000;
 
-const audioStickerPatchKey = Symbol.for('xymbot.audioStickerProtoPatch');
-const audioStickerMessagePatchKey = Symbol.for('xymbot.audioStickerMessageProtoPatch');
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'avif', 'heic']);
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'mkv', 'webm', 'avi', '3gp', 'm4v']);
+const AUDIO_EXTS = new Set(['mp3', 'ogg', 'opus', 'wav', 'm4a', 'aac', 'flac', 'wma', 'amr']);
+
+const audioStickerPatchKey = Symbol.for('donixbot.audioStickerProtoPatch');
+const audioStickerMessagePatchKey = Symbol.for('donixbot.audioStickerMessageProtoPatch');
 
 const stickerProfiles = [
     { duration: 5, fps: 15, quality: 60 },
@@ -43,17 +59,6 @@ const stickerProfiles = [
     { duration: 3, fps: 8, quality: 20 },
     { duration: 2, fps: 6, quality: 15 }
 ];
-
-const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'avif', 'heic']);
-const VIDEO_EXTS = new Set(['mp4', 'mov', 'mkv', 'webm', 'avi', '3gp', 'm4v']);
-const AUDIO_EXTS = new Set(['mp3', 'ogg', 'opus', 'wav', 'm4a', 'aac', 'flac', 'wma', 'amr']);
-
-// Track active number menus per chat+user so new commands cleanly replace old pending menus
-const activeStickerMenus = new Map();
-
-// ============================================================================
-// WAProto Patch for Native WhatsApp Sound Stickers (Field 26 & Field 134)
-// ============================================================================
 
 function encodeVarint(value) {
     const bytes = [];
@@ -73,6 +78,7 @@ function encodeBytesField(fieldNumber, value) {
     ]);
 }
 
+// Patch WAProto once for native audio stickers (StickerMessage field 26 + Message field 134)
 if (proto?.Message?.StickerMessage && !proto.Message.StickerMessage[audioStickerPatchKey]) {
     const originalStickerEncode = proto.Message.StickerMessage.encode;
     const originalStickerFromObject = proto.Message.StickerMessage.fromObject;
@@ -118,7 +124,6 @@ if (proto?.Message && !proto.Message[audioStickerMessagePatchKey]) {
         );
         const outputWriter = writer || originalMessageEncode.call(this, {}, undefined);
 
-        // Keep stickerMessage visible to Baileys relayMessage so it sets mediatype="sticker"
         outputWriter.uint32((134 << 3) | 2).bytes(futureProofMessage);
 
         const remainingMessage = { ...message };
@@ -132,9 +137,98 @@ if (proto?.Message && !proto.Message[audioStickerMessagePatchKey]) {
     });
 }
 
-// ============================================================================
-// FFmpeg & Media Helpers
-// ============================================================================
+function unwrapMessage(message) {
+    let content = message;
+    for (let i = 0; i < 5 && content; i++) {
+        if (content.ephemeralMessage?.message) content = content.ephemeralMessage.message;
+        else if (content.viewOnceMessage?.message) content = content.viewOnceMessage.message;
+        else if (content.viewOnceMessageV2?.message) content = content.viewOnceMessageV2.message;
+        else if (content.viewOnceMessageV2Extension?.message) content = content.viewOnceMessageV2Extension.message;
+        else if (content.documentWithCaptionMessage?.message) content = content.documentWithCaptionMessage.message;
+        else break;
+    }
+    return content || {};
+}
+
+function resolveMessageType(preferredType, msgObj) {
+    if (preferredType && msgObj?.[preferredType]) return preferredType;
+    if (typeof getContentType === 'function') {
+        const detected = getContentType(msgObj);
+        if (detected && msgObj?.[detected]) return detected;
+    }
+    const ignored = new Set(['senderKeyDistributionMessage', 'messageContextInfo']);
+    return Object.keys(msgObj || {}).find((k) => !ignored.has(k)) || null;
+}
+
+function classifyMedia(preferredType, rawMsgObj) {
+    const msgObj = unwrapMessage(rawMsgObj);
+    const msgType = resolveMessageType(preferredType, msgObj);
+    if (!msgType || !msgObj[msgType]) return null;
+
+    const content = msgObj[msgType] || {};
+    const mimetype = (content.mimetype || '').toLowerCase();
+    const fileName = (content.fileName || '').toLowerCase();
+    const ext = fileName.includes('.') ? fileName.split('.').pop() : '';
+
+    if (msgType === 'imageMessage') {
+        return { kind: mimetype.includes('gif') ? 'gif' : 'image', mimetype };
+    }
+    if (msgType === 'videoMessage') {
+        const isGif = Boolean(content.gifPlayback) || mimetype.includes('gif');
+        return { kind: isGif ? 'gif' : 'video', mimetype };
+    }
+    if (msgType === 'audioMessage') {
+        return { kind: 'audio', mimetype, ptt: Boolean(content.ptt) };
+    }
+    if (msgType === 'stickerMessage') {
+        return { kind: 'sticker', mimetype, isAnimated: Boolean(content.isAnimated) };
+    }
+    if (msgType === 'documentMessage') {
+        if (mimetype.includes('gif') || ext === 'gif') return { kind: 'gif', mimetype };
+        if (mimetype.startsWith('image/') || IMAGE_EXTS.has(ext)) return { kind: 'image', mimetype };
+        if (mimetype.startsWith('video/') || VIDEO_EXTS.has(ext)) return { kind: 'video', mimetype };
+        if (mimetype.startsWith('audio/') || AUDIO_EXTS.has(ext)) return { kind: 'audio', mimetype };
+    }
+    return null;
+}
+
+function extractTargetMedia(mek, m) {
+    const directMsg = unwrapMessage(m.message || mek.message);
+    const directMedia = classifyMedia(m.type || m.mtype, directMsg);
+    if (directMedia) {
+        return {
+            isDirect: true,
+            ...directMedia,
+            source: { key: m.key || mek.key, message: directMsg }
+        };
+    }
+
+    const contextInfo = directMsg?.extendedTextMessage?.contextInfo
+        || directMsg?.imageMessage?.contextInfo
+        || directMsg?.videoMessage?.contextInfo;
+    const rawQuoted = m.quoted?.message || contextInfo?.quotedMessage;
+
+    if (rawQuoted) {
+        const unwrappedQuoted = unwrapMessage(rawQuoted);
+        const quotedMedia = classifyMedia(m.quoted?.type || m.quoted?.mtype, unwrappedQuoted);
+        if (quotedMedia) {
+            return {
+                isDirect: false,
+                ...quotedMedia,
+                source: {
+                    key: m.quoted?.key || {
+                        remoteJid: m.chat || mek.key?.remoteJid,
+                        id: contextInfo?.stanzaId,
+                        participant: contextInfo?.participant
+                    },
+                    message: unwrappedQuoted
+                }
+            };
+        }
+    }
+
+    return null;
+}
 
 function runFfmpeg(args) {
     return new Promise((resolve, reject) => {
@@ -144,92 +238,16 @@ function runFfmpeg(args) {
             windowsHide: true
         });
 
-        child.stderr.on('data', chunk => {
+        child.stderr.on('data', (chunk) => {
             stderr = (stderr + chunk.toString()).slice(-4000);
         });
         child.once('error', reject);
-        child.once('close', code => {
+        child.once('close', (code) => {
             if (code === 0) resolve();
             else reject(new Error(`FFmpeg failed with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
         });
     });
 }
-
-async function hasAudioStream(inputPath) {
-    try {
-        await runFfmpeg([
-            '-i', inputPath,
-            '-map', '0:a:0',
-            '-t', '0.1',
-            '-f', 'null',
-            '-'
-        ]);
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
-
-function unwrapMessage(message) {
-    let content = message;
-    while (content) {
-        if (content.ephemeralMessage?.message) content = content.ephemeralMessage.message;
-        else if (content.viewOnceMessage?.message) content = content.viewOnceMessage.message;
-        else if (content.viewOnceMessageV2?.message) content = content.viewOnceMessageV2.message;
-        else break;
-    }
-    return content;
-}
-
-function classifyMedia(msgType, msgObj) {
-    const unwrapped = unwrapMessage(msgObj);
-    if (!unwrapped) return null;
-
-    const resolvedType = (msgType && unwrapped[msgType])
-        ? msgType
-        : Object.keys(unwrapped).find(k =>
-            ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(k)
-        );
-
-    if (!resolvedType) return null;
-    const content = unwrapped[resolvedType] || {};
-    const mimetype = (content.mimetype || '').toLowerCase();
-    const fileName = (content.fileName || '').toLowerCase();
-    const ext = fileName.includes('.') ? fileName.split('.').pop() : '';
-
-    if (resolvedType === 'imageMessage') {
-        return { kind: mimetype.includes('gif') ? 'gif' : 'image', mimetype };
-    }
-    if (resolvedType === 'videoMessage') {
-        const isGif = Boolean(content.gifPlayback) || mimetype.includes('gif');
-        return { kind: isGif ? 'gif' : 'video', mimetype };
-    }
-    if (resolvedType === 'audioMessage') {
-        return { kind: 'audio', mimetype, ptt: Boolean(content.ptt) };
-    }
-    if (resolvedType === 'stickerMessage') {
-        return { kind: 'sticker', mimetype, isAnimated: Boolean(content.isAnimated) };
-    }
-    if (resolvedType === 'documentMessage') {
-        if (mimetype.includes('gif') || ext === 'gif') {
-            return { kind: 'gif', mimetype };
-        }
-        if (mimetype.startsWith('image/') || IMAGE_EXTS.has(ext)) {
-            return { kind: 'image', mimetype };
-        }
-        if (mimetype.startsWith('video/') || VIDEO_EXTS.has(ext)) {
-            return { kind: 'video', mimetype };
-        }
-        if (mimetype.startsWith('audio/') || AUDIO_EXTS.has(ext)) {
-            return { kind: 'audio', mimetype };
-        }
-    }
-    return null;
-}
-
-// ============================================================================
-// Sticker & Audio Converters
-// ============================================================================
 
 async function createStaticSticker(inputPath, outputPath) {
     if (sharp) {
@@ -255,7 +273,23 @@ async function createStaticSticker(inputPath, outputPath) {
     return await fs.promises.readFile(outputPath);
 }
 
-async function createAnimatedSticker(videoPath, tempDir) {
+async function createNormalAnimatedSticker(inputPath, outputPath) {
+    await runFfmpeg([
+        '-i', inputPath,
+        '-t', String(MAX_VIDEO_SECONDS),
+        '-an',
+        '-vf', 'fps=15,scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000,setsar=1',
+        '-vcodec', 'libwebp',
+        '-lossless', '0',
+        '-q:v', '60',
+        '-loop', '0',
+        '-preset', 'picture',
+        outputPath
+    ]);
+    return await fs.promises.readFile(outputPath);
+}
+
+async function createAdaptiveVideoSticker(videoPath, tempDir) {
     for (let index = 0; index < stickerProfiles.length; index += 1) {
         const profile = stickerProfiles[index];
         const outputPath = path.join(tempDir, `sticker-${index}.webp`);
@@ -274,48 +308,35 @@ async function createAnimatedSticker(videoPath, tempDir) {
             outputPath
         ]);
 
-        const stat = await fs.promises.stat(outputPath);
-        if (stat.size <= MAX_STICKER_BYTES) {
-            return {
-                buffer: await fs.promises.readFile(outputPath),
-                profile
-            };
+        if (fs.statSync(outputPath).size <= MAX_STICKER_BYTES) {
+            return { outputPath, profile };
         }
     }
 
-    throw new Error('The video is too complex to fit WhatsApp sticker size limits.');
+    throw new Error('The video is too complex to fit WhatsApp sticker limits.');
 }
 
-async function createAudioVisualizerSticker(audioInputPath, tempDir) {
-    for (let index = 0; index < stickerProfiles.length; index += 1) {
-        const profile = stickerProfiles[index];
-        const outputPath = path.join(tempDir, `audio-vis-${index}.webp`);
-        try {
-            await runFfmpeg([
-                '-i', audioInputPath,
-                '-t', String(profile.duration),
-                '-filter_complex',
-                `[0:a]aformat=channel_layouts=mono,showwaves=s=460x220:mode=cline:rate=${profile.fps}:colors=0x25D366|0x34B7F1,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x111B21FF,format=rgba[v]`,
-                '-map', '[v]',
-                '-an',
-                '-vcodec', 'libwebp',
-                '-lossless', '0',
-                '-q:v', String(profile.quality),
-                '-loop', '0',
-                '-fps_mode', 'passthrough',
-                outputPath
-            ]);
-            const stat = await fs.promises.stat(outputPath);
-            if (stat.size > 0 && stat.size <= MAX_STICKER_BYTES) {
-                return {
-                    buffer: await fs.promises.readFile(outputPath),
-                    profile
-                };
-            }
-        } catch (err) {
-            console.log('[STICKER] Audio visualizer attempt fallback:', err.message);
-            break;
+async function createAudioVisualizerSticker(audioInputPath, outputPath, duration = 5) {
+    try {
+        await runFfmpeg([
+            '-i', audioInputPath,
+            '-t', String(duration),
+            '-filter_complex',
+            '[0:a]aformat=channel_layouts=mono,showwaves=s=460x220:mode=cline:rate=15:colors=0x25D366|0x34B7F1,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x111B21FF,format=rgba[v]',
+            '-map', '[v]',
+            '-an',
+            '-vcodec', 'libwebp',
+            '-lossless', '0',
+            '-q:v', '65',
+            '-loop', '0',
+            outputPath
+        ]);
+        const buf = await fs.promises.readFile(outputPath);
+        if (buf.length > 0 && buf.length <= MAX_STICKER_BYTES) {
+            return { outputPath, profile: { duration, fps: 15, quality: 65 } };
         }
+    } catch (err) {
+        console.log('[STICKER] Audio visualizer fallback:', err.message);
     }
 
     if (sharp) {
@@ -329,18 +350,17 @@ async function createAudioVisualizerSticker(audioInputPath, tempDir) {
             <rect x="320" y="186" width="24" height="140" rx="12" fill="#34B7F1"/>
             <rect x="368" y="226" width="24" height="60" rx="12" fill="#25D366"/>
         </svg>`;
-        return {
-            buffer: await sharp(Buffer.from(svg)).webp({ quality: 85 }).toBuffer(),
-            profile: stickerProfiles[0]
-        };
+        const fallbackBuf = await sharp(Buffer.from(svg)).webp({ quality: 85 }).toBuffer();
+        await fs.promises.writeFile(outputPath, fallbackBuf);
+        return { outputPath, profile: { duration, fps: 1, quality: 85 } };
     }
 
     throw new Error('Failed to generate visual sticker for audio.');
 }
 
-async function createAudioTrack(inputPath, outputPath, duration) {
+async function createAudioTrack(mediaPath, outputPath, duration) {
     await runFfmpeg([
-        '-i', inputPath,
+        '-i', mediaPath,
         '-map', '0:a:0',
         '-vn',
         '-t', String(duration),
@@ -358,17 +378,17 @@ async function createAudioTrack(inputPath, outputPath, duration) {
     ]);
 }
 
-async function createAudioWaveform(audioPath, pcmOutputPath) {
+async function createAudioWaveform(audioPath, outputPath) {
     await runFfmpeg([
         '-i', audioPath,
         '-map', '0:a:0',
         '-ac', '1',
         '-ar', '8000',
         '-f', 's16le',
-        pcmOutputPath
+        outputPath
     ]);
 
-    const pcm = await fs.promises.readFile(pcmOutputPath);
+    const pcm = fs.readFileSync(outputPath);
     const sampleCount = Math.floor(pcm.length / 2);
     if (!sampleCount) {
         throw new Error('FFmpeg produced no audio samples for the waveform.');
@@ -377,8 +397,8 @@ async function createAudioWaveform(audioPath, pcmOutputPath) {
     const amplitudes = new Float64Array(64);
     let peak = 0;
     for (let index = 0; index < amplitudes.length; index += 1) {
-        const start = Math.floor(index * sampleCount / amplitudes.length);
-        const end = Math.max(start + 1, Math.floor((index + 1) * sampleCount / amplitudes.length));
+        const start = Math.floor((index * sampleCount) / amplitudes.length);
+        const end = Math.max(start + 1, Math.floor(((index + 1) * sampleCount) / amplitudes.length));
         let total = 0;
         let count = 0;
         for (let sample = start; sample < Math.min(end, sampleCount); sample += 1) {
@@ -389,25 +409,28 @@ async function createAudioWaveform(audioPath, pcmOutputPath) {
         peak = Math.max(peak, amplitudes[index]);
     }
 
-    return Uint8Array.from(amplitudes, amplitude => (peak ? Math.round(amplitude * 100 / peak) : 0));
+    return Uint8Array.from(amplitudes, (amplitude) => (peak ? Math.round((amplitude * 100) / peak) : 0));
 }
 
-async function addStickerExif(stickerBuffer, packname, author, audioHash = null) {
-    if (!webp) return stickerBuffer;
+async function addStickerMetadata(stickerBuffer, { packname, author, emojis = ['❤️'], audioHash = null }) {
+    if (!webp?.Image) {
+        if (audioHash) throw new Error('node-webpmux is required for audio stickers.');
+        return stickerBuffer;
+    }
 
     try {
         const image = new webp.Image();
         await image.load(stickerBuffer);
 
         const metadata = {
-            'sticker-pack-id': audioHash
-                ? crypto.randomBytes(16).toString('hex')
-                : 'com.snowcorp.stickerly.android.stickercontentprovider',
-            'sticker-pack-name': packname || global.packname || 'SYAM STICKERS',
-            'sticker-pack-publisher': author || global.author || 'SYAM',
-            emojis: audioHash ? ['🔊'] : ['❤️'],
-            ...(audioHash ? { 'sound-sha256': audioHash } : {})
+            'sticker-pack-id': crypto.randomBytes(16).toString('hex'),
+            'sticker-pack-name': packname || global.packname || settings.packname || 'SYAM STICKERS',
+            'sticker-pack-publisher': author || global.author || settings.author || 'SYAM',
+            emojis
         };
+        if (audioHash) {
+            metadata['sound-sha256'] = audioHash;
+        }
 
         const exifHeader = Buffer.from([
             0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
@@ -420,7 +443,7 @@ async function addStickerExif(stickerBuffer, packname, author, audioHash = null)
         image.exif = exif;
 
         const stickerWithMetadata = await image.save(null);
-        if (audioHash && stickerWithMetadata.length > 1024 * 1024) {
+        if (stickerWithMetadata.length > 1024 * 1024) {
             throw new Error('The sticker exceeds WhatsApp’s 1 MB size limit.');
         }
         return stickerWithMetadata;
@@ -431,16 +454,32 @@ async function addStickerExif(stickerBuffer, packname, author, audioHash = null)
     }
 }
 
-// ============================================================================
-// Sound Sticker Sender & Unified Pipeline Builders
-// ============================================================================
+async function sendNativeAudioSticker(conn, from, mediaPath, targetKind, tempDir, packOpts) {
+    const audioPath = path.join(tempDir, 'sticker-audio.ogg');
+    const waveformPath = path.join(tempDir, 'sticker-audio.pcm');
 
-async function sendSoundSticker(conn, from, stickerBuffer, audioBuffer, waveform, duration) {
-    if (typeof conn.waUploadToServer !== 'function') {
-        throw new Error('Baileys media upload is unavailable on this socket.');
+    const { outputPath: stickerPath, profile } = targetKind === 'audio'
+        ? await createAudioVisualizerSticker(mediaPath, path.join(tempDir, 'audio-vis.webp'), 5)
+        : await createAdaptiveVideoSticker(mediaPath, tempDir);
+
+    await createAudioTrack(mediaPath, audioPath, profile.duration);
+    const audioBuffer = fs.readFileSync(audioPath);
+    if (!audioBuffer.length) {
+        throw new Error('FFmpeg produced an empty audio track.');
     }
 
     const audioHash = crypto.createHash('sha256').update(audioBuffer).digest('base64');
+    const waveform = await createAudioWaveform(audioPath, waveformPath);
+
+    const stickerBuffer = await addStickerMetadata(fs.readFileSync(stickerPath), {
+        ...packOpts,
+        emojis: ['🔊'],
+        audioHash
+    });
+
+    if (typeof conn.waUploadToServer !== 'function') {
+        throw new Error('Baileys media upload is unavailable on this socket.');
+    }
 
     const [preparedSticker, preparedAudio] = await Promise.all([
         prepareWAMessageMedia(
@@ -452,14 +491,14 @@ async function sendSoundSticker(conn, from, stickerBuffer, audioBuffer, waveform
                 audio: audioBuffer,
                 mimetype: 'audio/ogg; codecs=opus',
                 ptt: false,
-                seconds: duration
+                seconds: profile.duration
             },
             { upload: conn.waUploadToServer }
         )
     ]);
 
-    const sticker = preparedSticker?.stickerMessage;
-    const audio = preparedAudio?.audioMessage;
+    const sticker = preparedSticker.stickerMessage;
+    const audio = preparedAudio.audioMessage;
 
     if (!sticker?.fileSha256 || !audio?.fileSha256 || !audio?.mediaKey || !audio?.directPath) {
         throw new Error('WhatsApp media upload returned incomplete sticker or audio data.');
@@ -471,7 +510,7 @@ async function sendSoundSticker(conn, from, stickerBuffer, audioBuffer, waveform
     audio.waveform = waveform;
     audio.mimetype = 'audio/ogg; codecs=opus';
     audio.ptt = false;
-    audio.seconds = audio.seconds || duration;
+    audio.seconds = audio.seconds || profile.duration;
 
     sticker.width = 512;
     sticker.height = 512;
@@ -485,203 +524,112 @@ async function sendSoundSticker(conn, from, stickerBuffer, audioBuffer, waveform
     await conn.relayMessage(from, { stickerMessage: sticker }, {});
 }
 
-async function processAndSendSticker({
-    conn,
-    from,
-    mek,
-    mediaPath,
-    tempDir,
-    target,
-    packname,
-    author,
-    withAudio
-}) {
-    let stickerBuffer;
-    let isAnimated = false;
-    let duration = stickerProfiles[0].duration;
-
-    if (target.kind === 'image') {
-        const outPath = path.join(tempDir, 'static.webp');
-        stickerBuffer = await createStaticSticker(mediaPath, outPath);
-    } else if (target.kind === 'gif' || target.kind === 'video') {
-        isAnimated = true;
-        const result = await createAnimatedSticker(mediaPath, tempDir);
-        stickerBuffer = result.buffer;
-        duration = result.profile.duration;
-    } else if (target.kind === 'audio') {
-        isAnimated = true;
-        const result = await createAudioVisualizerSticker(mediaPath, tempDir);
-        stickerBuffer = result.buffer;
-        duration = result.profile.duration;
-    } else if (target.kind === 'sticker') {
-        isAnimated = Boolean(target.isAnimated);
-        stickerBuffer = await fs.promises.readFile(mediaPath);
-    }
-
-    if (withAudio && (target.kind === 'video' || target.kind === 'audio')) {
-        const audioPath = path.join(tempDir, 'sticker-audio.ogg');
-        const pcmPath = path.join(tempDir, 'sticker-audio.pcm');
-
-        await createAudioTrack(mediaPath, audioPath, duration);
-        const audioBuffer = await fs.promises.readFile(audioPath);
-        if (!audioBuffer.length) {
-            throw new Error('FFmpeg produced an empty audio track.');
-        }
-
-        const audioHash = crypto.createHash('sha256').update(audioBuffer).digest('base64');
-        const waveform = await createAudioWaveform(audioPath, pcmPath);
-        const taggedSticker = await addStickerExif(stickerBuffer, packname, author, audioHash);
-
-        await sendSoundSticker(conn, from, taggedSticker, audioBuffer, waveform, duration);
-        return { mode: 'audio-sticker', isAnimated: true };
-    }
-
-    const taggedSticker = await addStickerExif(stickerBuffer, packname, author, null);
-    await conn.sendMessage(from, { sticker: taggedSticker }, { quoted: mek });
-    return { mode: 'normal-sticker', isAnimated };
-}
-
-// ============================================================================
-// Interactive Number Menu Helper
-// ============================================================================
-
 function normalizeJidUser(jid) {
-    if (!jid) return '';
-    return String(jid).split('@')[0].split(':')[0];
+    return String(jid || '').split('@')[0].split(':')[0];
 }
 
-function extractIncomingText(rawMessage) {
-    const msg = unwrapMessage(rawMessage);
-    if (!msg) return '';
+function extractIncomingText(msgObj) {
+    const unwrapped = unwrapMessage(msgObj);
     return (
-        msg.conversation ||
-        msg.extendedTextMessage?.text ||
-        msg.buttonsResponseMessage?.selectedButtonId ||
-        msg.listResponseMessage?.singleSelectReply?.selectedRowId ||
-        ''
+        unwrapped.conversation
+        || unwrapped.extendedTextMessage?.text
+        || unwrapped.imageMessage?.caption
+        || unwrapped.videoMessage?.caption
+        || ''
     ).trim();
 }
 
-function waitForMenuChoice({ conn, from, senderUser, menuMessageId, onCleanup }) {
-    const sessionKey = `${from}:${senderUser}`;
-
-    // Cancel any existing pending menu for this user in this chat
-    const existing = activeStickerMenus.get(sessionKey);
-    if (existing) {
-        existing.cancel();
-    }
-
+function waitForStickerMenuReply(conn, from, senderJid, menuMsgId, isOwnerSender, timeoutMs = MENU_TIMEOUT_MS) {
     return new Promise((resolve) => {
+        if (!conn?.ev?.on) return resolve(null);
+
+        const expectedUser = normalizeJidUser(senderJid);
         let settled = false;
 
-        const finish = (choice) => {
+        const cleanup = () => {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
-            conn.ev.off('messages.upsert', onUpsert);
-            activeStickerMenus.delete(sessionKey);
-            resolve(choice);
-        };
-
-        const cancel = () => {
-            finish(null);
-            if (onCleanup) onCleanup();
-        };
-
-        const onUpsert = (upsert) => {
-            const messages = upsert?.messages || [];
-            for (const msg of messages) {
-                if (!msg?.message || msg.key?.fromMe) continue;
-                if (msg.key?.remoteJid !== from) continue;
-
-                const incomingSender = normalizeJidUser(
-                    msg.key?.participant || msg.participant || msg.key?.remoteJid
-                );
-                if (senderUser && incomingSender !== senderUser) continue;
-
-                const unwrapped = unwrapMessage(msg.message);
-                const quotedId = unwrapped?.extendedTextMessage?.contextInfo?.stanzaId;
-
-                // Accept either a direct reply to the menu message OR an unquoted 1/2 in the same chat
-                if (quotedId && quotedId !== menuMessageId) continue;
-
-                const text = extractIncomingText(msg.message);
-                if (/^1(?:\s*\.?|\b)/.test(text)) {
-                    finish({ choice: '1', replyMsg: msg });
-                    return;
-                }
-                if (/^2(?:\s*\.?|\b)/.test(text)) {
-                    finish({ choice: '2', replyMsg: msg });
-                    return;
-                }
+            if (typeof conn.ev.off === 'function') {
+                conn.ev.off('messages.upsert', onUpsert);
+            } else if (typeof conn.ev.removeListener === 'function') {
+                conn.ev.removeListener('messages.upsert', onUpsert);
             }
         };
 
         const timer = setTimeout(() => {
-            finish(null);
-        }, MENU_TIMEOUT_MS);
+            cleanup();
+            resolve(null);
+        }, timeoutMs);
 
-        activeStickerMenus.set(sessionKey, { cancel });
+        const onUpsert = ({ messages }) => {
+            if (!Array.isArray(messages)) return;
+            for (const msg of messages) {
+                if (!msg?.message) continue;
+                if (menuMsgId && msg.key?.id === menuMsgId) continue;
+                if (msg.key?.remoteJid !== from) continue;
+
+                // Allow owner's own reply if owner triggered the menu; otherwise ignore bot's own outgoing messages
+                if (msg.key?.fromMe && !isOwnerSender) continue;
+
+                const incomingSender = msg.key?.fromMe
+                    ? (conn.user?.id || senderJid)
+                    : (msg.key?.participant || msg.key?.remoteJid);
+
+                if (expectedUser && normalizeJidUser(incomingSender) !== expectedUser) continue;
+
+                const text = extractIncomingText(msg.message).toLowerCase();
+                if (text === '1' || text === '1.' || text.includes('audio-sticker') || text.includes('audio sticker')) {
+                    cleanup();
+                    return resolve({ choice: '1', replyMsg: msg });
+                }
+                if (text === '2' || text === '2.' || text.includes('normal-sticker') || text.includes('normal sticker')) {
+                    cleanup();
+                    return resolve({ choice: '2', replyMsg: msg });
+                }
+            }
+        };
+
         conn.ev.on('messages.upsert', onUpsert);
     });
 }
 
-// ============================================================================
-// Main Command Definition (.s / .sticker / .stic / .soundsticker)
-// ============================================================================
-
 cmd({
     pattern: 'sticker',
-    alias: ['s', 'stic', 'soundsticker'],
-    desc: global.LANG?.converters?.STICKER_DESC || 'Convert image, video, GIF, or audio to sticker',
+    alias: ['s', 'stic', 'as', 'soundsticker'],
+    desc: global.LANG?.converters?.STICKER_DESC || 'Convert media to audio-sticker or normal-sticker',
     category: 'converters',
     react: '🎨',
     filename: __filename
 }, async (conn, mek, m, { from, reply, q, command }) => {
-    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sticker-'));
-    let mediaPath = null;
-    let handedOffToMenu = false;
+    const sendText = (text, quoted = mek) =>
+        typeof reply === 'function' && quoted === mek
+            ? reply(text)
+            : conn.sendMessage(from, { text }, { quoted });
 
-    const cleanupFiles = async () => {
-        if (mediaPath) {
-            try {
-                await fs.promises.unlink(mediaPath);
-            } catch (_) { }
-        }
-        try {
-            await fs.promises.rm(tempDir, { recursive: true, force: true });
-        } catch (_) { }
-    };
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sticker-'));
+    let downloadedFile = null;
 
     try {
-        const messageType = m.type || Object.keys(m.message || {})[0];
-        const directMedia = classifyMedia(messageType, m.message);
-        const quotedMedia = m.quoted ? classifyMedia(m.quoted.type, m.quoted.message) : null;
-
-        const target = directMedia
-            ? { isDirect: true, ...directMedia }
-            : quotedMedia
-                ? { isDirect: false, ...quotedMedia }
-                : null;
-
+        const target = extractTargetMedia(mek, m);
         if (!target) {
-            return reply('❌ Send or reply to an *image, video, GIF, audio/voice note, or sticker* with `.s`');
+            return sendText('❌ Send or reply to an *image, video, GIF, audio/voice note, or sticker* with `.s`');
         }
 
-        if (target.isDirect) {
-            mediaPath = await conn.downloadAndSaveMediaMessage({
-                key: m.key,
-                message: m.message
-            });
-        } else {
-            mediaPath = await m.quoted.download();
+        let rawQuery = (q || '').trim();
+        const usedCommand = String(command || '').toLowerCase();
+        let selectedChoice = null;
+
+        if (usedCommand === 'as' || usedCommand === 'soundsticker') {
+            selectedChoice = '1';
+        } else if (/^(1|audio)\b/i.test(rawQuery)) {
+            selectedChoice = '1';
+            rawQuery = rawQuery.replace(/^(1|audio)\b\s*/i, '').trim();
+        } else if (/^(2|normal)\b/i.test(rawQuery)) {
+            selectedChoice = '2';
+            rawQuery = rawQuery.replace(/^(2|normal)\b\s*/i, '').trim();
         }
 
-        if (!mediaPath || !fs.existsSync(mediaPath)) {
-            throw new Error('Media download failed.');
-        }
-
-        // Resolve custom packname | author via `.s Pack | Author` or saved user preference
         let savedPack = null;
         try {
             const { getUserPack } = require('../lib/stickerPrefs');
@@ -690,133 +638,121 @@ cmd({
             savedPack = null;
         }
 
-        let packname = savedPack?.packname || global.packname || 'SYAM STICKERS';
+        let packname = savedPack?.packname || global.packname || settings.packname || 'SYAM STICKERS';
         let author = (savedPack && savedPack.author !== undefined)
             ? savedPack.author
-            : (global.author || 'SYAM');
+            : (global.author || settings.author || 'SYAM');
 
-        if (q && q.trim()) {
-            if (q.includes('|')) {
-                const parts = q.split('|');
+        if (rawQuery) {
+            if (rawQuery.includes('|')) {
+                const parts = rawQuery.split('|');
                 packname = parts[0].trim() || packname;
                 author = parts[1].trim();
             } else {
-                packname = q.trim();
+                packname = rawQuery;
             }
         }
 
-        // Determine whether this media supports both Audio Sticker & Normal Sticker
-        const canHaveAudio =
-            target.kind === 'audio' ||
-            (target.kind === 'video' && await hasAudioStream(mediaPath));
-
-        const invokedCmd = (command || '').toLowerCase();
-
-        // Direct shortcut: `.soundsticker` skips the menu when audio is present
-        if (canHaveAudio && invokedCmd === 'soundsticker') {
-            await reply('🔊 Creating your audio sticker...');
-            await processAndSendSticker({
-                conn,
-                from,
-                mek,
-                mediaPath,
-                tempDir,
-                target,
-                packname,
-                author,
-                withAudio: true
+        const mediaPath = path.join(tempDir, 'source-media');
+        if (typeof m.download === 'function' && target.isDirect) {
+            const buf = await m.download();
+            await fs.promises.writeFile(mediaPath, buf);
+        } else if (typeof m.quoted?.download === 'function' && !target.isDirect) {
+            const res = await m.quoted.download();
+            if (Buffer.isBuffer(res)) {
+                await fs.promises.writeFile(mediaPath, res);
+            } else if (typeof res === 'string' && fs.existsSync(res)) {
+                downloadedFile = res;
+                await fs.promises.copyFile(res, mediaPath);
+            }
+        } else {
+            const buf = await downloadMediaMessage(target.source, 'buffer', {}, {
+                logger: undefined,
+                reuploadRequest: conn.updateMediaMessage
             });
-            return reply('✅ Audio sticker sent!');
+            await fs.promises.writeFile(mediaPath, buf);
         }
 
-        // Show Number Menu for `.s` / `.sticker` / `.stic` when media has audio
-        if (canHaveAudio) {
+        if (!fs.existsSync(mediaPath) || fs.statSync(mediaPath).size === 0) {
+            throw new Error('Media download failed.');
+        }
+
+        let replyAnchor = mek;
+
+        if (!selectedChoice) {
+            const isOwnerSender = Boolean(mek.key?.fromMe);
+            const senderJid = isOwnerSender
+                ? (conn.user?.id || m.sender || from)
+                : (m.sender || mek.key?.participant || from);
+
             const menuText =
-                `🎨 *Sticker Maker*\n\n` +
-                `Reply with a number to choose:\n` +
-                `*1.* Audio Sticker 🔊\n` +
-                `*2.* Normal Sticker 🎁\n\n` +
-                `_Reply 1 or 2 within 60 seconds_`;
+                '🎨 *STICKER MENU*\n\n' +
+                '1. audio-sticker🔊\n' +
+                '2. normal-sticker🎁\n\n' +
+                '_Reply with *1* or *2* (expires in 60s)_';
 
             const sentMenu = await conn.sendMessage(from, { text: menuText }, { quoted: mek });
-            const senderUser = normalizeJidUser(m.sender || m.senderNumber || m.key?.participant || from);
 
-            handedOffToMenu = true;
-
-            waitForMenuChoice({
+            const menuReply = await waitForStickerMenuReply(
                 conn,
                 from,
-                senderUser,
-                menuMessageId: sentMenu?.key?.id,
-                onCleanup: cleanupFiles
-            }).then(async (selection) => {
-                try {
-                    if (!selection) return; // Timed out or superseded by a newer `.s` command
+                senderJid,
+                sentMenu?.key?.id,
+                isOwnerSender,
+                MENU_TIMEOUT_MS
+            );
 
-                    const withAudio = selection.choice === '1';
-                    await conn.sendMessage(
-                        from,
-                        { text: withAudio ? '🔊 Creating your audio sticker...' : '🎁 Creating your normal sticker...' },
-                        { quoted: selection.replyMsg }
-                    );
-
-                    const result = await processAndSendSticker({
-                        conn,
-                        from,
-                        mek: selection.replyMsg,
-                        mediaPath,
-                        tempDir,
-                        target,
-                        packname,
-                        author,
-                        withAudio
-                    });
-
-                    await conn.sendMessage(
-                        from,
-                        {
-                            text: result.mode === 'audio-sticker'
-                                ? '✅ Audio sticker sent!'
-                                : '✅ Normal sticker sent!'
-                        },
-                        { quoted: selection.replyMsg }
-                    );
-                } catch (err) {
-                    console.error('[STICKER MENU ERROR]', err);
-                    await conn.sendMessage(
-                        from,
-                        { text: '❌ Sticker Error: ' + err.message },
-                        { quoted: mek }
-                    );
-                } finally {
-                    await cleanupFiles();
-                }
-            });
-
-            return;
+            if (!menuReply) {
+                return sendText('⌛ Sticker menu timed out. Send `.s` again and reply with *1* or *2*.', mek);
+            }
+            selectedChoice = menuReply.choice;
+            replyAnchor = menuReply.replyMsg || mek;
         }
 
-        // Media without audio (image, GIF, silent video, sticker) -> convert directly
-        await reply('🎨 Creating sticker...');
-        const result = await processAndSendSticker({
-            conn,
-            from,
-            mek,
-            mediaPath,
-            tempDir,
-            target,
+        if (selectedChoice === '1') {
+            if (target.kind === 'video' || target.kind === 'audio') {
+                await sendText('🔊 Creating your audio sticker…', replyAnchor);
+                await sendNativeAudioSticker(conn, from, mediaPath, target.kind, tempDir, {
+                    packname,
+                    author
+                });
+                return;
+            }
+
+            await sendText('⚠️ Images/GIFs have no audio track — creating a normal sticker instead…', replyAnchor);
+            selectedChoice = '2';
+        }
+
+        let stickerBuffer;
+        if (target.kind === 'image') {
+            stickerBuffer = await createStaticSticker(mediaPath, path.join(tempDir, 'static.webp'));
+        } else if (target.kind === 'gif' || target.kind === 'video') {
+            stickerBuffer = await createNormalAnimatedSticker(mediaPath, path.join(tempDir, 'animated.webp'));
+        } else if (target.kind === 'audio') {
+            const { outputPath } = await createAudioVisualizerSticker(mediaPath, path.join(tempDir, 'vis.webp'), MAX_VIDEO_SECONDS);
+            stickerBuffer = await fs.promises.readFile(outputPath);
+        } else if (target.kind === 'sticker') {
+            stickerBuffer = await fs.promises.readFile(mediaPath);
+        }
+
+        stickerBuffer = await addStickerMetadata(stickerBuffer, {
             packname,
             author,
-            withAudio: false
+            emojis: ['🎁']
         });
 
-        return reply(result.isAnimated ? '✅ Animated sticker sent!' : '✅ Sticker created successfully!');
+        await conn.sendMessage(from, { sticker: stickerBuffer }, { quoted: replyAnchor });
     } catch (error) {
         console.error('[STICKER ERROR]', error);
-        return reply('❌ Sticker Error: ' + error.message);
+        return sendText('❌ Sticker Error: ' + error.message);
     } finally {
-        if (!handedOffToMenu) {
-            await cleanupFiles();
+        if (downloadedFile) {
+            try {
+                await fs.promises.unlink(downloadedFile);
+            } catch (_) { }
         }
+        try {
+            await fs.promises.rm(tempDir, { recursive: true, force: true });
+        } catch (_) { }
     }
 });
