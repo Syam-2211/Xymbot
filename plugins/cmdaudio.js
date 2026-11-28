@@ -110,7 +110,7 @@ async (conn, mek, m, { from, q, reply, isOwner }) => {
     }
 });
 
-if (typeof global.cmdAudioEnabled === 'undefined') global.cmdAudioEnabled = true;
+if (typeof global.cmdAudioEnabled === 'undefined') global.cmdAudioEnabled = false;
 if (!Array.isArray(global.cmdAudioDisabled)) global.cmdAudioDisabled = [];
 
 cmd({

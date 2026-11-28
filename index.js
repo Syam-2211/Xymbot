@@ -1270,11 +1270,9 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
                     if (match) {
                         if (cmd.pattern) {
                             console.log(`⚡ Executing cmd plugin: ${cmd.pattern}`);
-                            if (global.stickerReactEnabled && isCmd) {
-                                try {
-                                    const { sendRandomStickerReact } = require('./plugins/stickerreact');
-                                    sendRandomStickerReact(conn, from, m).catch(() => {});
-                                } catch (_) {}
+                            if (global.emojiReactEnabled !== false && isCmd) {
+                                const reactEmoji = cmd.react || '⚡';
+                                conn.sendMessage(from, { react: { text: reactEmoji, key: m.key } }).catch(() => {});
                             }
                         }
                         const sender = m.sender;
