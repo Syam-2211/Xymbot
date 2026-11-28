@@ -53,6 +53,18 @@ let handler = async (m, { conn, participants, action }) => {
     for (let rawUser of participants) {
         // Normalize user (in some Baileys versions it's an object with id or phoneNumber)
         let user = typeof rawUser === 'object' ? (rawUser.phoneNumber || rawUser.id) : rawUser;
+        if (global.groupEventsEnabled !== false && (action === 'promote' || action === 'demote')) {
+            const actor = m.sender || m.author || '';
+            const actorNum = actor ? actor.split('@')[0].split(':')[0] : 'Admin';
+            const userNum = String(user).split('@')[0].split(':')[0];
+            const mentions = [user];
+            if (actor) mentions.push(actor);
+            const msgText = action === 'promote'
+                ? `👑 *@${actorNum}* promoted *@${userNum}* to Admin!`
+                : `⬇️ *@${actorNum}* demoted *@${userNum}* from Admin.`;
+            await conn.sendMessage(m.chat, { text: msgText, mentions }).catch(() => {});
+            continue;
+        }
         if (!user) continue;
 
         let pp = 'https://files.catbox.moe/nbn8w8.jpeg'; // Working fallback image
