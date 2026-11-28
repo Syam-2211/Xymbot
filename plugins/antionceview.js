@@ -54,27 +54,28 @@ async (conn, mek, m, { from, quoted, reply }) => {
         try {
             mediaPath = await m.quoted.download();
         } catch (downloadErr) {
-            console.error("ViewOnce m.quoted.download failed, attempting direct unwrap download:", downloadErr.message);
+            console.error("ViewOnce m.quoted.download failed, trying stream fallback:", downloadErr.message);
             try {
-                mediaPath = await conn.downloadAndSaveMediaMessage({
-                    key: m.quoted.key,
-                    message: inner
-                });
-            } catch (err2) {
-                console.error("ViewOnce direct download also failed:", err2.message);
-                // Attempt 3: Try to find original message from message cache / store if stanzaId is present
+                const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
                 const stanzaId = mek.message?.extendedTextMessage?.contextInfo?.stanzaId;
-                if (stanzaId && global.messageCache && global.messageCache.has(stanzaId)) {
-                    try {
-                        const cached = global.messageCache.get(stanzaId);
-                        mediaPath = await conn.downloadAndSaveMediaMessage({
-                            key: m.quoted.key,
-                            message: cached
-                        });
-                    } catch (cacheErr) {
-                        console.error("ViewOnce cache download failed:", cacheErr.message);
+                const cached = (stanzaId && global.messageCache && global.messageCache.has(stanzaId))
+                    ? unwrapViewOnce(global.messageCache.get(stanzaId))
+                    : null;
+                const targetObj = (cached && cached[mediaType]) ? cached[mediaType] : inner?.[mediaType];
+                if (targetObj) {
+                    const streamType = mediaType.replace('Message', '');
+                    const stream = await downloadContentFromMessage(targetObj, streamType);
+                    const chunks = [];
+                    for await (const chunk of stream) chunks.push(chunk);
+                    const buf = Buffer.concat(chunks);
+                    if (buf.length > 0) {
+                        const ext = mediaType === 'imageMessage' ? 'jpg' : mediaType === 'videoMessage' ? 'mp4' : mediaType === 'audioMessage' ? 'ogg' : 'bin';
+                        mediaPath = path.join(__dirname, `../tmp_vv_${Date.now()}.${ext}`);
+                        fs.writeFileSync(mediaPath, buf);
                     }
                 }
+            } catch (err2) {
+                console.error("ViewOnce stream fallback also failed:", err2.message);
             }
         }
 
