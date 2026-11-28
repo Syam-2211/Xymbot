@@ -892,31 +892,63 @@ conn.ev.on('messages.upsert', async (chatUpdate) => {
             // while allowing the paired user to run commands in DMs, @lid chats, groups, and channels.
             if (m.key.id && botSentIds.has(m.key.id)) continue;
 
-            // ─── ANTI-DELETE (GROUP) ────────────────────────────────────────────
+            // ─── ANTI-DELETE (ALL CHATS & ALL MEDIA) ─────────────────────────────
             const protoMsg = m.message?.protocolMessage;
-            if (protoMsg && protoMsg.type === 0 && protoMsg.key?.id && m.key.remoteJid?.endsWith('@g.us')) {
-                const groupChat = getChatSettings(m.key.remoteJid);
-                if (groupChat.antidelete && !botSentIds.has(protoMsg.key.id)) {
+            if (protoMsg && protoMsg.type === 0 && protoMsg.key?.id) {
+                const isGroupChat = m.key.remoteJid?.endsWith('@g.us');
+                const groupChat = isGroupChat ? getChatSettings(m.key.remoteJid) : null;
+                const enabled = global.antiDeleteEnabled !== false && (!isGroupChat || groupChat?.antidelete || global.antiDeleteTarget !== 'chat');
+                if (enabled && !botSentIds.has(protoMsg.key.id)) {
                     const cached = messageCache.get(protoMsg.key.id);
                     if (cached) {
+                        const deleter = m.key.participant || m.key.remoteJid;
+                        const deleterNum = deleter.split('@')[0].split(':')[0];
+                        const targetMode = global.antiDeleteTarget || 'chat';
+                        const targets = new Set();
+                        if (targetMode === 'chat' || targetMode === 'all') targets.add(m.key.remoteJid);
+                        if (targetMode === 'owner' || targetMode === 'all') {
+                            (global.owner || []).forEach(n => targets.add(`${String(n).replace(/[^0-9]/g, '')}@s.whatsapp.net`));
+                        }
+                        if (targetMode === 'sudo' || targetMode === 'all') {
+                            (global.sudo || []).forEach(n => targets.add(`${String(n).replace(/[^0-9]/g, '')}@s.whatsapp.net`));
+                        }
+
+                        const mediaKey = ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].find(k => cached[k]);
                         const deletedText = cached.conversation
                             || cached.extendedTextMessage?.text
                             || cached.imageMessage?.caption
                             || cached.videoMessage?.caption
                             || cached.documentMessage?.caption
                             || '';
-                        const deleter = m.key.participant || m.key.remoteJid;
-                        const deleterNum = deleter.split('@')[0].split(':')[0];
-                        if (deletedText) {
-                            await conn.sendMessage(m.key.remoteJid, {
-                                text: `🗑️ *ANTI-DELETE RECOVERED*\n👤 *Deleted by:* @${deleterNum}\n💬 *Message:* ${deletedText}`,
-                                mentions: [deleter]
-                            }).catch(() => { });
-                        } else {
-                            await conn.sendMessage(m.key.remoteJid, {
-                                text: `🗑️ *ANTI-DELETE:* @${deleterNum} deleted a media/sticker message.`,
-                                mentions: [deleter]
-                            }).catch(() => { });
+
+                        let mediaBuf = null;
+                        if (mediaKey) {
+                            try {
+                                mediaBuf = await downloadMediaMessage({ key: protoMsg.key, message: cached }, 'buffer', {}, { reuploadRequest: conn.updateMediaMessage });
+                            } catch (_) {
+                                try {
+                                    const stream = await downloadContentFromMessage(cached[mediaKey], mediaKey.replace('Message', ''));
+                                    const chunks = [];
+                                    for await (const c of stream) chunks.push(c);
+                                    mediaBuf = Buffer.concat(chunks);
+                                } catch (_) {}
+                            }
+                        }
+
+                        const header = `🗑️ *ANTI-DELETE RECOVERED*\n👤 *Deleted by:* @${deleterNum}`;
+                        for (const tJid of targets) {
+                            if (mediaBuf && mediaBuf.length > 0) {
+                                const cap = deletedText ? `${header}\n💬 *Caption:* ${deletedText}` : header;
+                                if (mediaKey === 'imageMessage') await conn.sendMessage(tJid, { image: mediaBuf, caption: cap, mentions: [deleter] }).catch(() => {});
+                                else if (mediaKey === 'videoMessage') await conn.sendMessage(tJid, { video: mediaBuf, caption: cap, mentions: [deleter] }).catch(() => {});
+                                else if (mediaKey === 'audioMessage') await conn.sendMessage(tJid, { audio: mediaBuf, mimetype: cached.audioMessage?.mimetype || 'audio/mp4', ptt: !!cached.audioMessage?.ptt }).catch(() => {});
+                                else if (mediaKey === 'stickerMessage') await conn.sendMessage(tJid, { sticker: mediaBuf }).catch(() => {});
+                                else await conn.sendMessage(tJid, { document: mediaBuf, mimetype: cached.documentMessage?.mimetype || 'application/octet-stream', fileName: cached.documentMessage?.fileName || 'deleted_file', caption: cap, mentions: [deleter] }).catch(() => {});
+                            } else if (deletedText) {
+                                await conn.sendMessage(tJid, { text: `${header}\n💬 *Message:* ${deletedText}`, mentions: [deleter] }).catch(() => {});
+                            } else {
+                                await conn.sendMessage(tJid, { text: `${header}\n📦 *(Deleted media/message)*`, mentions: [deleter] }).catch(() => {});
+                            }
                         }
                     }
                 }
