@@ -249,6 +249,25 @@ if (fs.existsSync(blockedChatsFile)) {
 if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp');
 
 global.cmdAudio = {};
+const botConfigFile = path.join(__dirname, 'database/botconfig.json');
+if (fs.existsSync(botConfigFile)) {
+    try {
+        const savedCfg = JSON.parse(fs.readFileSync(botConfigFile, 'utf8'));
+        if (savedCfg.PREFIX !== undefined) global.PREFIX = savedCfg.PREFIX;
+        if (savedCfg.botName) global.botName = savedCfg.botName;
+        if (savedCfg.ownerName) global.ownerName = savedCfg.ownerName;
+        if (Array.isArray(savedCfg.owner) && savedCfg.owner.length) global.owner = savedCfg.owner;
+        if (savedCfg.WORKTYPE) global.WORKTYPE = savedCfg.WORKTYPE;
+        if (savedCfg.packname) global.packname = savedCfg.packname;
+        if (Array.isArray(savedCfg.sudo)) global.sudo = savedCfg.sudo;
+        if (Array.isArray(savedCfg.everyCmds)) global.everyCmds = savedCfg.everyCmds;
+        if (typeof savedCfg.cmdAudioEnabled === 'boolean') global.cmdAudioEnabled = savedCfg.cmdAudioEnabled;
+        if (Array.isArray(savedCfg.cmdAudioDisabled)) global.cmdAudioDisabled = savedCfg.cmdAudioDisabled;
+        console.log(`💾 [BotConfig] Restored saved config (Prefix: '${global.PREFIX}', Mode: ${global.WORKTYPE})`);
+    } catch (e) {
+        console.error('Failed to parse botconfig.json:', e);
+    }
+}
 const cmdAudioFile = path.join(__dirname, 'database/cmdaudio.json');
 if (fs.existsSync(cmdAudioFile)) {
     try {
